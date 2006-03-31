@@ -1,0 +1,307 @@
+#!/usr/bin/python
+#+
+# This script constructs a Subversion repository structure, in
+# svnadmin dump format, faking the check-in history by looking
+# at the modification dates of the different versions of the source
+# files.
+#
+# First successful run 2006 March 31 by Lawrence D'Oliveiro
+#    <ldo@geek-central.gen.nz>
+#-
+
+import sys
+import os
+import time
+import calendar
+import re
+import md5
+import getopt
+
+class SvnDumpWriter :
+	"""encapsulates everything I know about the svnadmin dump format."""
+
+	@staticmethod
+	def FormatTime(DateTime) :
+		"""formats a date/time given as either a string of the form
+		YYYYMMDDhhmmss or a structure as might be returned by
+		time.gmtime for inclusion as a property value in a dump."""
+		if type(DateTime) == str and len(DateTime) == 14 :
+			Result = \
+			  (
+				int(DateTime[0:4]),
+				int(DateTime[4:6]),
+				int(DateTime[6:8]),
+				int(DateTime[8:10]),
+				int(DateTime[10:12]),
+				int(DateTime[12:14])
+			  )
+		elif type(DateTime) == time.struct_time :
+			Result = DateTime[0:6]
+		else :
+			raise TypeError("can't format DateTime \"%s\"" % DateTime)
+		#end if
+		return "%04d-%02d-%02dT%02d:%02d:%02d.000000Z" % Result
+	#end FormatTime
+
+	@staticmethod
+	def FormatProps(PropsDict) :
+		"""returns a string containing properly-formatted representations
+		of the key-value pairs in PropsDict."""
+		Result = ""
+		for Key in PropsDict.iterkeys() :
+			Value = PropsDict[Key]
+			Result += \
+					"K %d\n%s\nV %d\n%s\n" \
+				% \
+					(len(Key), Key, len(Value), Value)
+		#end for
+		return Result + "PROPS-END\n"
+	#end FormatProps
+
+	def NewRevision(self, Date, PropsDict) :
+		"""writes the header for a new revision."""
+		self.Dump.write("Revision-number: %d\n" % self.NextRevision)
+		PropsCopy = {"svn:date" : self.FormatTime(Date)}
+		if PropsDict != None :
+			PropsCopy.update(PropsDict)
+		#end if
+		PropsStr = self.FormatProps(PropsCopy)
+		self.Dump.write("Prop-content-length: %d\n" % len(PropsStr))
+		self.Dump.write("Content-length: %d\n" % len(PropsStr))
+		self.Dump.write("\n" + PropsStr + "\n")
+		self.NextRevision += 1
+	#end NewRevision
+
+	def WriteFileNode(self, Path, Action, Content) :
+		"""writes a node for a file named Path, where Action can be
+		"add", "modify" or "delete", and Content is the actual contents
+		for the file (or None for a delete action)."""
+		self.Dump.write("Node-path: " + Path + "\n")
+		if Action != "delete" :
+			self.Dump.write("Node-kind: file\n") # all I support for now
+		#end if
+		self.Dump.write("Node-action: " + Action + "\n")
+		if Action == "add" :
+			PropsStr = self.FormatProps({})
+		else :
+			PropsStr = ""
+		#end if
+		if PropsStr != "" :
+			self.Dump.write("Prop-content-length: %d\n" % len(PropsStr))
+		#end if
+		if Content != None :
+			self.Dump.write("Text-content-length: %d\n" % len(Content))
+			self.Dump.write \
+			  (
+					"Text-content-md5: %s\n"
+				%
+					md5.new(Content).hexdigest()
+			  )
+			self.Dump.write \
+			  (
+					"Content-length: %d\n"
+				%
+					(len(Content) + len(PropsStr))
+			  )
+		#end if
+		self.Dump.write("\n") # end of header
+		if PropsStr != "" :
+			self.Dump.write(PropsStr)
+		#end if
+		if Content != None :
+			self.Dump.write(Content + "\n")
+		#end if
+		self.Dump.write("\n")
+	#end WriteFileNode
+
+	def WriteRevision(self, Date, Props, Files) :
+		"""writes a whole collection of file nodes as a single revision."""
+		self.NewRevision(Date, Props)
+		for ThisFile in Files :
+			self.WriteFileNode \
+			  (
+				ThisFile["path"],
+				ThisFile["action"],
+				ThisFile["content"]
+			  )
+		#end for
+	#end WriteRevision
+
+	def __init__(self, Dump, UUID, CreateDate) :
+		"""Dump is the stream to which to write the contents of the
+		repository dump."""
+		self.Dump = Dump
+		self.Dump.write("SVN-fs-dump-format-version: 2\n\n")
+		self.Dump.write("UUID: " + UUID + "\n\n")
+		self.NextRevision = 0
+		self.NewRevision(CreateDate, {})
+	#end __init__
+
+#end SvnDumpWriter
+
+#+
+# Mainline
+#-
+
+(Opts, Args) = getopt.getopt \
+  (
+	sys.argv[1:],
+	"",
+	["create=", "replace=", "user=", "uuid="]
+  )
+UUID = None
+CreateDate = None
+Replacing = {}
+UserName = os.environ["USER"]
+for Keyword, Value in Opts :
+	if Keyword == "--uuid" :
+		UUID = Value
+	elif Keyword == "--create" :
+		CreateDate = Value
+	elif Keyword == "--replace" :
+		(Old, New) = Value.split("/")
+		Replacing[New] = Old
+		sys.stderr.write("Replacement \"%s\" => \"%s\"\n" % (Old, New)) # debug
+	elif Keyword == "--user" :
+		UserName = Value
+	#end if
+#end for
+if len(Args) != 1 :
+	raise getopt.error("need exactly one arg, being working directory")
+#end if
+if CreateDate == None :
+	raise getopt.error("Missing --create=date")
+#end if
+ItemsDir = Args[0]
+if not os.path.isdir(ItemsDir) :
+	raise getopt.error("\"%s\" is not a directory" % ItemsDir)
+#end if
+OldItemsDir = os.path.join(ItemsDir, "Old")
+if not os.path.isdir(OldItemsDir) :
+	raise getopt.error("Directory \"%s\" does not exist" % OldItemsDir)
+#end if
+if UUID == None :
+	UUID = file("/proc/sys/kernel/random/uuid").readline().rstrip("\n")
+#end if
+Sequence = []
+NrSteps = {}
+FileNames = set()
+for Item in os.listdir(ItemsDir) :
+	ItemPath = os.path.join(ItemsDir, Item)
+	if ItemPath != OldItemsDir :
+		if os.path.isfile(ItemPath) :
+			ItemDate = time.gmtime(os.stat(ItemPath).st_mtime)
+			NrSteps[Item] = 1
+			FileNames.add(Item)
+			Sequence.append \
+			  (
+				{
+					"basename" : Item,
+					"path" : ItemPath,
+					"date" : ItemDate,
+				}
+			  )
+			sys.stderr.write \
+			  (
+					"New item \"%s\" mod %s\n"
+				%
+					(Item, SvnDumpWriter.FormatTime(ItemDate))
+			  ) # debug
+		elif os.path.isdir(ItemPath) :
+			sys.stderr.write("Warning: ignoring subdirectory \"%s\"\n" % Item)
+		else :
+			sys.stderr.write("Warning: ignoring special file \"%s\"\n" % Item)
+		#end if
+	#end if
+#end for
+for Replacer in Replacing :
+	if Replacer not in FileNames :
+		raise getopt.error("No such replacer item as \"%s\"" % Replacer)
+	#end if
+	if Replacing[Replacer] not in FileNames :
+		raise getopt.error("No such replacee item as \"%s\"" % Replacing[Replacer])
+	#end if
+#end for
+TrailingDigits = re.compile(r"^(.*)\s+[0-9]+$")
+for Item in os.listdir(OldItemsDir) :
+	ItemPath = os.path.join(OldItemsDir, Item)
+	ParseName = TrailingDigits.match(Item)
+	if ParseName != None :
+		BaseName = ParseName.group(1)
+		if BaseName in FileNames :
+			ItemDate = time.gmtime(os.stat(ItemPath).st_mtime)
+			NrSteps[BaseName] += 1
+			Sequence.append \
+			  (
+				{
+					"basename" : BaseName,
+					"path" : ItemPath,
+					"date" : ItemDate,
+				}
+			  )
+			sys.stderr.write \
+			  (
+					"Old item \"%s\" for \"%s\" mod %s\n"
+				%
+					(
+						Item,
+						BaseName,
+						SvnDumpWriter.FormatTime(ItemDate)
+					)
+			  ) # debug
+		else :
+			sys.stderr.write \
+			  (
+					"Warning: can't find current item \"%s\""
+						" for old item \"%s\"\n"
+				%
+					(BaseName, Item)
+			  )
+		#end if
+	else :
+		sys.stderr.write("Warning: ignoring old item \"%s\"\n" % Item)
+	#end if
+#end for
+Sequence.sort \
+  (
+	None,
+	lambda Item : calendar.timegm(Item["date"])
+  )
+Dump = SvnDumpWriter(sys.stdout, UUID, CreateDate)
+Added = set()
+ReplaceNewlines = re.compile("\\\015\\\012?|\\\012")
+for Step in Sequence :
+	BaseName = Step["basename"]
+	Files = []
+	if Replacing.has_key(BaseName) :
+		if NrSteps[Replacing[BaseName]] != 0 :
+			sys.stderr.write("Error: premature replacement of \"%s\" by \"%s\"" % (Replacing[BaseName], BaseName))
+		#end if
+		sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
+		sys.stderr.write("del \"%s\"\n" % Replacing[BaseName])
+		Files.append \
+		  (
+			{
+				"path" : Replacing[BaseName],
+				"action" : "delete",
+				"content" : None
+			}
+		  )
+		del Replacing[BaseName]
+	#end if
+	Content = ReplaceNewlines.sub("\n", file(Step["path"], "r").read())
+	  # Note I'm assuming all files are text files!
+	sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
+	if BaseName in Added :
+		sys.stderr.write("mod \"%s\" <= \"%s\"" % (BaseName, Step["path"]))
+		Action = "change"
+	else :
+		sys.stderr.write("add \"%s\" <= \"%s\"" % (BaseName, Step["path"]))
+		Added.add(BaseName)
+		Action = "add"
+	#end if
+	Files.append({"path" : BaseName, "action" : Action, "content" : Content})
+	Dump.WriteRevision(Step["date"], {"svn:author" : UserName}, Files)
+	NrSteps[BaseName] -= 1
+	sys.stderr.write("\n")
+#end for
