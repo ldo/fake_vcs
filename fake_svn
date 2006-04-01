@@ -1,12 +1,58 @@
 #!/usr/bin/python
 #+
-# This script constructs a Subversion repository structure, in
-# svnadmin dump format, faking the check-in history by looking
-# at the modification dates of the different versions of the source
+# This script constructs a simpleminded Subversion repository structure,
+# in svnadmin dump format, faking the check-in history by looking
+# at the modification dates of the different versions of a set of source
 # files.
+#
+# Invoke this script as follows:
+#
+#     fake_svn [options...] dir
+#
+# where dir is the directory containing the source files to be
+# included in the repository. It must contain the newest version of
+# each of the source files at the top level, plus a single subdirectory
+# called "Old" which may have older versions of the source files.
+# These are matched up with the corresponding newest version based
+# on their name, which must consist of the name of the newest version,
+# followed by a space, and then a decimal integer version number.
+# The version number is supposed to indicate the sequence in which
+# the various versions of the file were modified, but in fact this
+# script determines the sequence by looking only at the modification
+# dates on the files.
+#
+# Valid options (optional unless otherwise indicated) are:
+#
+#     --create=datetime
+#         (Required) The UTC creation date/time to give the repository
+#         (recorded as the date/time for "revision 0".) datetime should
+#         consist of exactly 14 decimal digits, which are interpreted as
+#         YYYYMMDDhhmmss.
+#     --localtimezone=zonename
+#         If specified, indicates that the modification dates/times of
+#         the source files come from a system where they are interpreted
+#         as local times in the zone zonename, not UTC, so they have to
+#         be converted to UTC. If omitted, the modification dates/times
+#         are assumed to already be in UTC.
+#     --replace=oldfile/newfile
+#         Specifies that a deletion of oldfile from the repository is
+#         to be committed at the same time as the addition of the first
+#         version of newfile (indicating that oldfile is being replaced by
+#         newfile in the project). All versions of oldfile should have
+#         older modification dates than any version of newfile, otherwise
+#         an error will be reported.
+#             This may be specified multiple times to indicate multiple
+#         file replacements.
+#     --user=username
+#         The username to record in the repository commit entries. If
+#         omitted, defaults to the value of the USER environment variable.
+#     --uuid=idstring
+#         The UUID to record to uniquely identify the repository. If
+#         omitted, a UUID is randomly generated.
 #
 # First successful run 2006 March 31 by Lawrence D'Oliveiro
 #    <ldo@geek-central.gen.nz>
+# Add documentation comments and --localtimezone option 2006 April 1.
 #-
 
 import sys
@@ -139,6 +185,31 @@ class SvnDumpWriter :
 
 #end SvnDumpWriter
 
+def FileModTime(FileName) :
+	"""returns the modified date/time for FileName, appropriately
+	adjusted if it comes from a system where it was recorded as the
+	local time in LocalTimeZone."""
+	TheTime = os.stat(ItemPath).st_mtime
+	if LocalTimeZone != None :
+		# it was actually local time, convert to UTC
+		TheTime = time.gmtime(TheTime)[0:8] + (time.localtime(TheTime)[8],)
+		  # preserve daylight-saving flag
+		sys.stderr.write \
+		  (
+				"localtime (%s) => gmtime (%s)\n"
+			%
+				(
+					",".join(str(TheTime[i]) for i in range(0, 9)),
+					",".join(str(time.gmtime(time.mktime(TheTime))[i]) for i in range(0, 9))
+				)
+		  ) # debug
+		TheTime = time.gmtime(time.mktime(TheTime))
+	else :
+		TheTime = time.gmtime(TheTime)
+	#end if
+	return TheTime
+#end FileModTime
+
 #+
 # Mainline
 #-
@@ -147,17 +218,20 @@ class SvnDumpWriter :
   (
 	sys.argv[1:],
 	"",
-	["create=", "replace=", "user=", "uuid="]
+	["create=", "localtimezone=", "replace=", "user=", "uuid="]
   )
 UUID = None
 CreateDate = None
 Replacing = {}
 UserName = os.environ["USER"]
+LocalTimeZone = None
 for Keyword, Value in Opts :
 	if Keyword == "--uuid" :
 		UUID = Value
 	elif Keyword == "--create" :
 		CreateDate = Value
+	elif Keyword == "--localtimezone" :
+		LocalTimeZone = Value
 	elif Keyword == "--replace" :
 		(Old, New) = Value.split("/")
 		Replacing[New] = Old
@@ -183,6 +257,9 @@ if not os.path.isdir(OldItemsDir) :
 if UUID == None :
 	UUID = file("/proc/sys/kernel/random/uuid").readline().rstrip("\n")
 #end if
+if LocalTimeZone != None :
+	os.environ["TZ"] = LocalTimeZone
+#end if
 Sequence = []
 NrSteps = {}
 FileNames = set()
@@ -190,7 +267,7 @@ for Item in os.listdir(ItemsDir) :
 	ItemPath = os.path.join(ItemsDir, Item)
 	if ItemPath != OldItemsDir :
 		if os.path.isfile(ItemPath) :
-			ItemDate = time.gmtime(os.stat(ItemPath).st_mtime)
+			ItemDate = FileModTime(ItemPath)
 			NrSteps[Item] = 1
 			FileNames.add(Item)
 			Sequence.append \
@@ -229,7 +306,7 @@ for Item in os.listdir(OldItemsDir) :
 	if ParseName != None :
 		BaseName = ParseName.group(1)
 		if BaseName in FileNames :
-			ItemDate = time.gmtime(os.stat(ItemPath).st_mtime)
+			ItemDate = FileModTime(ItemPath)
 			NrSteps[BaseName] += 1
 			Sequence.append \
 			  (
