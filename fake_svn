@@ -47,6 +47,11 @@
 #         an error will be reported.
 #             This may be specified multiple times to indicate multiple
 #         file replacements.
+#     --trunk-branches-tags
+#         If specified, then the recommended initial repository
+#         structure is created, with top-level "trunk", "branches"
+#         and "tags" directories, and all files are saved in the
+#         repository in the "trunk" directory.
 #     --user=username
 #         The username to record in the repository commit entries. If
 #         omitted, defaults to the value of the USER environment variable.
@@ -58,6 +63,7 @@
 #    <ldo@geek-central.gen.nz>
 # Add documentation comments and --localtimezone option 2006 April 1.
 # Add --autolog option and rework local time conversion 2006 April 2.
+# Add --trunk-branches-tags option 2006 April 3.
 #-
 
 import sys
@@ -123,13 +129,14 @@ class SvnDumpWriter :
 		self.NextRevision += 1
 	#end NewRevision
 
-	def WriteFileNode(self, Path, Action, Content) :
-		"""writes a node for a file named Path, where Action can be
-		"add", "modify" or "delete", and Content is the actual contents
-		for the file (or None for a delete action)."""
+	def WriteNode(self, Path, Kind, Action, Content) :
+		"""writes a node for an item named Path of kind Kind ("file"
+		or "dir"), where Action can be "add", "modify" or "delete", and
+		Content is the actual contents for the file (or None for a directory
+		or a delete action)."""
 		self.Dump.write("Node-path: " + Path + "\n")
 		if Action != "delete" :
-			self.Dump.write("Node-kind: file\n") # all I support for now
+			self.Dump.write("Node-kind: %s\n" % Kind)
 		#end if
 		self.Dump.write("Node-action: " + Action + "\n")
 		if Action == "add" :
@@ -154,6 +161,13 @@ class SvnDumpWriter :
 				%
 					(len(Content) + len(PropsStr))
 			  )
+		elif len(PropsStr) != 0 :
+			self.Dump.write \
+			  (
+					"Content-length: %d\n"
+				%
+					len(PropsStr)
+			  )
 		#end if
 		self.Dump.write("\n") # end of header
 		if PropsStr != "" :
@@ -163,22 +177,23 @@ class SvnDumpWriter :
 			self.Dump.write(Content + "\n")
 		#end if
 		self.Dump.write("\n")
-	#end WriteFileNode
+	#end WriteNode
 
 	def WriteRevision(self, Date, Props, Files) :
 		"""writes a whole collection of file nodes as a single revision."""
 		self.NewRevision(Date, Props)
 		for ThisFile in Files :
-			self.WriteFileNode \
+			self.WriteNode \
 			  (
-				ThisFile["path"],
+				self.TrunkPrefix + ThisFile["path"],
+				"file",
 				ThisFile["action"],
 				ThisFile["content"]
 			  )
 		#end for
 	#end WriteRevision
 
-	def __init__(self, Dump, UUID, CreateDate) :
+	def __init__(self, Dump, UUID, CreateDate, TrunkBranchesTags) :
 		"""Dump is the stream to which to write the contents of the
 		repository dump."""
 		self.Dump = Dump
@@ -186,6 +201,14 @@ class SvnDumpWriter :
 		self.Dump.write("UUID: " + UUID + "\n\n")
 		self.NextRevision = 0
 		self.NewRevision(CreateDate, {})
+		self.TrunkPrefix = ""
+		if TrunkBranchesTags :
+			self.NewRevision(CreateDate, {})
+			for ThisDir in ("trunk", "branches", "tags") :
+				self.WriteNode(ThisDir, "dir", "add", None)
+			#end for
+			self.TrunkPrefix = "trunk/"
+		#end if
 	#end __init__
 
 #end SvnDumpWriter
@@ -293,7 +316,15 @@ def GetChangedComment(OldComment, NewComment) :
   (
 	sys.argv[1:],
 	"",
-	["autolog", "create=", "localtimezone=", "replace=", "user=", "uuid="]
+	[
+		"autolog",
+		"create=",
+		"localtimezone=",
+		"replace=",
+		"trunk-branches-tags",
+		"user=",
+		"uuid=",
+	]
   )
 Autolog = False
 UUID = None
@@ -301,21 +332,24 @@ CreateDate = None
 Replacing = {}
 UserName = os.environ["USER"]
 LocalTimeZone = None
+TrunkBranchesTags = False
 for Keyword, Value in Opts :
-	if Keyword == "--uuid" :
-		UUID = Value
+	if Keyword == "--autolog" :
+		Autolog = True
 	elif Keyword == "--create" :
 		CreateDate = Value
-	elif Keyword == "--autolog" :
-		Autolog = True
 	elif Keyword == "--localtimezone" :
 		LocalTimeZone = Value
 	elif Keyword == "--replace" :
 		(Old, New) = Value.split("/")
 		Replacing[New] = Old
 		sys.stderr.write("Replacement \"%s\" => \"%s\"\n" % (Old, New)) # debug
+	elif Keyword == "--trunk-branches-tags" :
+		TrunkBranchesTags = True
 	elif Keyword == "--user" :
 		UserName = Value
+	elif Keyword == "--uuid" :
+		UUID = Value
 	#end if
 #end for
 if len(Args) != 1 :
@@ -422,7 +456,7 @@ Sequence.sort \
 	None,
 	lambda Item : calendar.timegm(Item["date"])
   )
-Dump = SvnDumpWriter(sys.stdout, UUID, CreateDate)
+Dump = SvnDumpWriter(sys.stdout, UUID, CreateDate, TrunkBranchesTags)
 Added = set()
 ReplaceNewlines = re.compile("\\\015\\\012?|\\\012")
 if Autolog :
