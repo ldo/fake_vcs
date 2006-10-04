@@ -12,7 +12,7 @@
 # where dir is the directory containing the source files to be
 # included in the repository. It must contain the newest version of
 # each of the source files at the top level, plus a single subdirectory
-# called "Old" which may have older versions of the source files.
+# called "old" or "Old" which may have older versions of the source files.
 # These are matched up with the corresponding newest version based
 # on their name, which must consist of the name of the newest version,
 # followed by a space, and then a decimal integer version number.
@@ -64,6 +64,8 @@
 # Add documentation comments and --localtimezone option 2006 April 1.
 # Add --autolog option and rework local time conversion 2006 April 2.
 # Add --trunk-branches-tags option 2006 April 3.
+# Set svn:executable property on scripts, deal properly with obsoleted
+#    replaced items 2006 October 4.
 #-
 
 import sys
@@ -129,18 +131,21 @@ class SvnDumpWriter :
 		self.NextRevision += 1
 	#end NewRevision
 
-	def WriteNode(self, Path, Kind, Action, Content) :
+	def WriteNode(self, Path, Kind, Action, Props, Content) :
 		"""writes a node for an item named Path of kind Kind ("file"
 		or "dir"), where Action can be "add", "modify" or "delete", and
-		Content is the actual contents for the file (or None for a directory
-		or a delete action)."""
+		Content is the actual contents for the file (or None for a
+		directory or a delete action)."""
 		self.Dump.write("Node-path: " + Path + "\n")
 		if Action != "delete" :
 			self.Dump.write("Node-kind: %s\n" % Kind)
 		#end if
 		self.Dump.write("Node-action: " + Action + "\n")
-		if Action == "add" :
-			PropsStr = self.FormatProps({})
+		if Action == "add" or Props != None :
+			if Props == None :
+				Props = {}
+			#end if
+			PropsStr = self.FormatProps(Props)
 		else :
 			PropsStr = ""
 		#end if
@@ -179,15 +184,16 @@ class SvnDumpWriter :
 		self.Dump.write("\n")
 	#end WriteNode
 
-	def WriteRevision(self, Date, Props, Files) :
+	def WriteRevision(self, Date, RevisionProps, Files) :
 		"""writes a whole collection of file nodes as a single revision."""
-		self.NewRevision(Date, Props)
+		self.NewRevision(Date, RevisionProps)
 		for ThisFile in Files :
 			self.WriteNode \
 			  (
 				self.TrunkPrefix + ThisFile["path"],
 				"file",
 				ThisFile["action"],
+				ThisFile.get("props", None),
 				ThisFile["content"]
 			  )
 		#end for
@@ -205,7 +211,7 @@ class SvnDumpWriter :
 		if TrunkBranchesTags :
 			self.NewRevision(CreateDate, {})
 			for ThisDir in ("trunk", "branches", "tags") :
-				self.WriteNode(ThisDir, "dir", "add", None)
+				self.WriteNode(ThisDir, "dir", "add", None, None)
 			#end for
 			self.TrunkPrefix = "trunk/"
 		#end if
@@ -238,7 +244,7 @@ def GetRevisionComments(Content) :
 	from the initial part of the file Content."""
 	Comments = "" # initial assumption
 	ContentLines = Content.split("\n")
-	EndMarker = None
+	EndMarker = None # set to non-None if revision comments are found
 	if len(ContentLines) >= 3 :
 		if ContentLines[0] == "/*" :
 			# C/C++ code (note I don't use "//" comments)
@@ -256,7 +262,7 @@ def GetRevisionComments(Content) :
 	if EndMarker != None :
 		LineNr = 0
 		Lines = iter(ContentLines)
-		DateMatch = re.compile(r"\d{4} \S+ \d{1,2}")
+		DateMatch = re.compile(r"\d{4} \S+ \d{1,2}") # how I write all my dates
 		InHeader = False
 		GotRevisions = False
 		while True :
@@ -330,6 +336,7 @@ Autolog = False
 UUID = None
 CreateDate = None
 Replacing = {}
+Replaced = {}
 UserName = os.environ["USER"]
 LocalTimeZone = None
 TrunkBranchesTags = False
@@ -343,6 +350,7 @@ for Keyword, Value in Opts :
 	elif Keyword == "--replace" :
 		(Old, New) = Value.split("/")
 		Replacing[New] = Old
+		Replaced[Old] = New
 		sys.stderr.write("Replacement \"%s\" => \"%s\"\n" % (Old, New)) # debug
 	elif Keyword == "--trunk-branches-tags" :
 		TrunkBranchesTags = True
@@ -364,6 +372,9 @@ if not os.path.isdir(ItemsDir) :
 #end if
 OldItemsDir = os.path.join(ItemsDir, "Old")
 if not os.path.isdir(OldItemsDir) :
+	OldItemsDir = os.path.join(ItemsDir, "old")
+#end if
+if not os.path.isdir(OldItemsDir) :
 	raise getopt.error("Directory \"%s\" does not exist" % OldItemsDir)
 #end if
 if UUID == None :
@@ -372,9 +383,9 @@ if UUID == None :
 if LocalTimeZone != None :
 	os.environ["TZ"] = LocalTimeZone
 #end if
-Sequence = []
-NrSteps = {}
-FileNames = set()
+Sequence = [] # the sequence of entries into the repository
+NrSteps = {} # number of updates for each file
+FileNames = set() # names of all files
 for Item in os.listdir(ItemsDir) :
 	ItemPath = os.path.join(ItemsDir, Item)
 	if ItemPath != OldItemsDir :
@@ -403,21 +414,31 @@ for Item in os.listdir(ItemsDir) :
 		#end if
 	#end if
 #end for
-for Replacer in Replacing :
-	if Replacer not in FileNames :
-		raise getopt.error("No such replacer item as \"%s\"" % Replacer)
-	#end if
-	if Replacing[Replacer] not in FileNames :
-		raise getopt.error("No such replacee item as \"%s\"" % Replacing[Replacer])
-	#end if
-#end for
 TrailingDigits = re.compile(r"^(.*)\s+[0-9]+$")
+  # what I append to old version of a file
 for Item in os.listdir(OldItemsDir) :
 	ItemPath = os.path.join(OldItemsDir, Item)
 	ParseName = TrailingDigits.match(Item)
 	if ParseName != None :
 		BaseName = ParseName.group(1)
-		if BaseName in FileNames :
+		IncludeThisItem = True # to begin with
+		if BaseName not in FileNames :
+			if BaseName in Replaced :
+				NrSteps[BaseName] = 0
+				FileNames.add(BaseName)
+			else :
+				# shouldn't happen
+				sys.stderr.write \
+				  (
+						"Warning: can't find current/replaced item \"%s\""
+							" for old item \"%s\"\n"
+					%
+						(BaseName, Item)
+				  )
+				IncludeThisItem = False
+			#end if
+		#end if
+		if IncludeThisItem :
 			ItemDate = FileModTime(ItemPath)
 			NrSteps[BaseName] += 1
 			Sequence.append \
@@ -438,17 +459,18 @@ for Item in os.listdir(OldItemsDir) :
 						SvnDumpWriter.FormatTime(ItemDate)
 					)
 			  ) # debug
-		else :
-			sys.stderr.write \
-			  (
-					"Warning: can't find current item \"%s\""
-						" for old item \"%s\"\n"
-				%
-					(BaseName, Item)
-			  )
 		#end if
 	else :
+		# shouldn't happen
 		sys.stderr.write("Warning: ignoring old item \"%s\"\n" % Item)
+	#end if
+#end for
+for Replacer in Replacing :
+	if Replacer not in FileNames :
+		raise getopt.error("No such replacer item as \"%s\"" % Replacer)
+	#end if
+	if Replacing[Replacer] not in FileNames :
+		raise getopt.error("No such replace item as \"%s\"" % Replacing[Replacer])
 	#end if
 #end for
 Sequence.sort \
@@ -456,12 +478,14 @@ Sequence.sort \
 	None,
 	lambda Item : calendar.timegm(Item["date"])
   )
+  # insert entries in date order
 Dump = SvnDumpWriter(sys.stdout, UUID, CreateDate, TrunkBranchesTags)
 Added = set()
 ReplaceNewlines = re.compile("\\\015\\\012?|\\\012")
 if Autolog :
 	LastComments = {}
 #end if
+Executable = set()
 for Step in Sequence :
 	BaseName = Step["basename"]
 	Files = []
@@ -483,17 +507,21 @@ for Step in Sequence :
 	#end if
 	Content = ReplaceNewlines.sub("\n", file(Step["path"], "r").read())
 	  # Note I'm assuming all files are text files!
-	Props = {"svn:author" : UserName}
+	RevisionProps = {"svn:author" : UserName}
 	if Autolog :
 		TheseComments = GetRevisionComments(Content)
 		if LastComments.has_key(BaseName) :
-			ChangeLog = GetChangedComment(LastComments[BaseName], TheseComments)
+			ChangeLog = GetChangedComment \
+			  (
+				LastComments[BaseName],
+				TheseComments
+			  )
 		else :
 			ChangeLog = TheseComments
 		#end if
 		LastComments[BaseName] = TheseComments
 		if ChangeLog != "" :
-			Props["svn:log"] = ChangeLog
+			RevisionProps["svn:log"] = ChangeLog
 		#end if
 	#end if
 	sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
@@ -505,8 +533,25 @@ for Step in Sequence :
 		Added.add(BaseName)
 		Action = "add"
 	#end if
-	Files.append({"path" : BaseName, "action" : Action, "content" : Content})
-	Dump.WriteRevision(Step["date"], Props, Files)
+	FileProps = None
+	if Content[:2] == "#!" :
+		if BaseName not in Executable :
+			FileProps = {"svn:executable" : "*"}
+			# sometimes I also see "svn:execute" set to "1"
+			Executable.add(BaseName)
+		#end if
+	else :
+		if BaseName in Executable :
+			FileProps = {} # is this how to remove the svn:executable property?
+			Executable.remove(BaseName)
+		#end if
+	#end if
+	ThisFile = {"path" : BaseName, "action" : Action, "content" : Content}
+	if FileProps != None :
+		ThisFile["props"] = FileProps
+	#end if
+	Files.append(ThisFile)
+	Dump.WriteRevision(Step["date"], RevisionProps, Files)
 	NrSteps[BaseName] -= 1
 	sys.stderr.write("\n")
 #end for
