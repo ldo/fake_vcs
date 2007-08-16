@@ -72,6 +72,7 @@
 #    replaced items 2006 October 4.
 # No more special treatment of "old" subdirectory, add --delete option
 #    2007 March 12.
+# Allow for additional possibilities in TrailingDigits 2007 August 16.
 #-
 
 import sys
@@ -397,14 +398,14 @@ for Keyword, Value in Opts :
 	#end if
 #end for
 if len(Args) != 1 :
-	raise getopt.error("need exactly one arg, being working directory")
+	raise getopt.GetoptError("need exactly one arg, being working directory")
 #end if
 if CreateDate == None :
-	raise getopt.error("Missing --create=date")
+	raise getopt.GetoptError("Missing --create=date")
 #end if
 ItemsDir = Args[0]
 if not os.path.isdir(ItemsDir) :
-	raise getopt.error("\"%s\" is not a directory" % ItemsDir)
+	raise getopt.GetoptError("\"%s\" is not a directory" % ItemsDir)
 #end if
 if UUID == None :
 	UUID = open("/proc/sys/kernel/random/uuid").readline().rstrip("\n")
@@ -420,7 +421,7 @@ for BaseName in Deleting :
 	Deleting[BaseName] = ToUTCTime(Deleting[BaseName])
 #end for
 
-TrailingDigits = re.compile(r"^(.*)\s+[0-9]+$")
+TrailingDigits = re.compile(r"^(.*)\s+[0-9]+.*$")
   # what I append to old version of a file
 Sequence = [] # the sequence of entries into the repository
 NrSteps = {} # number of updates for each file
@@ -508,19 +509,19 @@ def IncludeItems(ItemsDir, ParentName) :
 IncludeItems(ItemsDir, "")
 for BaseName in Replacing :
 	if BaseName not in BaseNames :
-		raise getopt.error("No such replacer item as \"%s\"" % BaseName)
+		raise getopt.GetoptError("No such replacer item as \"%s\"" % BaseName)
 	#end if
 	if Replacing[BaseName] not in BaseNames :
-		raise getopt.error("No such replacee item as \"%s\"" % Replacing[BaseName])
+		raise getopt.GetoptError("No such replacee item as \"%s\"" % Replacing[BaseName])
 	#end if
 	BaseNames[Replacing[BaseName]]["replaced_by"] = BaseName
 #end for
 for BaseName in Deleting :
 	if BaseName not in BaseNames :
-		raise getopt.error("No such deletion item as \"%s\"" % BaseName)
+		raise getopt.GetoptError("No such deletion item as \"%s\"" % BaseName)
 	#end if
 	if BaseNames[BaseName].has_key("parent") :
-		raise getopt.error \
+		raise getopt.GetoptError \
 		  (
 				"Can't delete item in current revision: \"%s\""
 			%
@@ -528,7 +529,7 @@ for BaseName in Deleting :
 		  )
 	#end if
 	if BaseNames[BaseName].has_key("replaced_by") :
-		raise getopt.error \
+		raise getopt.GetoptError \
 		  (
 				"Item can't be both deleted and replaced: \"%s\""
 			%
@@ -544,7 +545,7 @@ for BaseName in BaseNames :
 		and \
 			BaseName not in Deleting \
 	:
-		raise getopt.error \
+		raise getopt.GetoptError \
 		  (
 				"item \"%s\" is not current but has no replacement or deletion"
 			%
