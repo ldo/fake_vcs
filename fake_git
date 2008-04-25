@@ -49,11 +49,15 @@
 #         an error will be reported.
 #             This may be specified multiple times to indicate multiple
 #         file replacements.
-#     --user=username
+#     --useremail=address
+#         The e-mail address to record in the repository commit entries. If
+#         omitted, git will take it from your global git configuration.
+#     --username=username
 #         The username to record in the repository commit entries. If
 #         omitted, defaults to the value of the USER environment variable.
 #
 # Adapted from fake_svn 2008 April 5 by Lawrence D'Oliveiro <ldo@geek-central.gen.nz>.
+# Figured out I wasn't passing TZ to git-commit-tree, add --useremail 2008 April 25.
 #-
 
 import sys
@@ -265,7 +269,8 @@ def GetChangedComment(OldComment, NewComment) :
 		"delete=",
 		"localtimezone=",
 		"replace=",
-		"user=",
+		"useremail=",
+		"username=",
 	]
 ,  )
 Autolog = False
@@ -273,6 +278,7 @@ BinaryFileNames = set()
 Deleting = {}
 Replacing = {}
 Replaced = {}
+UserEmail = None
 UserName = os.environ["USER"]
 LocalTimeZone = None
 for Keyword, Value in Opts :
@@ -290,7 +296,9 @@ for Keyword, Value in Opts :
 		Replacing[New] = Old
 		Replaced[Old] = New
 		sys.stderr.write("Replacement \"%s\" => \"%s\"\n" % (Old, New)) # debug
-	elif Keyword == "--user" :
+	elif Keyword == "--useremail" :
+		UserEmail = Value
+	elif Keyword == "--username" :
 		UserName = Value
 	#end if
 #end for
@@ -491,11 +499,20 @@ LastCommit = None # to begin with
 for Step in Sequence :
 	BaseName = Step["basename"]
 	Items = []
+	CommitDate = str(calendar.timegm(Step["date"]))
 	RevisionEnv = \
 	  {
 		"GIT_AUTHOR_NAME" : UserName,
-		"GIT_AUTHOR_DATE" : str(calendar.timegm(Step["date"])),
+		"GIT_AUTHOR_DATE" : CommitDate,
+		"GIT_COMMITTER_NAME" : UserName,
+		"GIT_COMMITTER_DATE" : CommitDate,
+		"TZ" : "UTC",
+		  # local timezones should only be relevant in output displays, not in repository
 	  }
+	if UserEmail != None :
+		RevisionEnv["GIT_AUTHOR_EMAIL"] = UserEmail
+		RevisionEnv["GIT_COMMITTER_EMAIL"] = UserEmail
+	#end if
 	ChangeLog = "" # initial assumption
 	if Step.get("action", None) == "delete" :
 		if BaseNames[BaseName]["nrsteps"] > 1 :
