@@ -1,13 +1,13 @@
 #!/usr/bin/python
 #+
-# This script constructs a simpleminded Subversion repository structure,
-# in svnadmin dump format, faking the check-in history by looking
-# at the modification dates of the different versions of a set of source
-# files.
+# This script constructs a simpleminded repository structure,
+# in either git fast-import or svnadmin dump format, faking the check-in
+# history by looking at the modification dates of the different versions
+# of a set of source files.
 #
 # Invoke this script as follows:
 #
-#     fake_svn [options...] dir
+#     fake_vcs [options...] dir
 #
 # where dir is the directory containing the source files to be
 # included in the repository. It can have subdirectories, which will
@@ -27,13 +27,15 @@
 #         part of the source files.
 #     --binary=name
 #         indicates that a file with the specified name is to be treated
-#         as binary, not text
+#         as binary, not text. Text files automatically have their newlines
+#         converted to Unix format. Binary files are not scanned for --autolog
+#         commit messages.
 #     --create=datetime
-#         (Required) The creation date/time (in the time zone specified
-#         to --localtimezone if present, else UTC) to give the repository
-#         (recorded as the date/time for "revision 0".) datetime should
-#         consist of exactly 14 decimal digits, which are interpreted as
-#         YYYYMMDDhhmmss.
+#         (Required for Subversion, ignored for Git) The repository creation
+#         date/time (in the time zone specified to --localtimezone if present,
+#         else UTC) to give the repository (recorded as the date/time for
+#         "revision 0".) datetime should consist of exactly 14 decimal digits,
+#         which are interpreted as YYYYMMDDhhmmss.
 #     --delete=oldfile/datetime
 #         Specifies that a deletion of oldfile from the repository is to
 #         be committed at datetime. All versions of oldfile should have
@@ -55,16 +57,18 @@
 #             This may be specified multiple times to indicate multiple
 #         file replacements.
 #     --trunk-branches-tags
-#         If specified, then the recommended initial repository
-#         structure is created, with top-level "trunk", "branches"
+#         (Subersion only) If specified, then the recommended initial
+#         repository structure is created, with top-level "trunk", "branches"
 #         and "tags" directories, and all files are saved in the
 #         repository in the "trunk" directory.
+#     --type=(git|svn)
+#         (Required) Specifies the dump file format to write: Git or Subversion.
 #     --user=username
 #         The username to record in the repository commit entries. If
 #         omitted, defaults to the value of the USER environment variable.
 #     --uuid=idstring
-#         The UUID to record to uniquely identify the repository. If
-#         omitted, a UUID is randomly generated.
+#         (Subversion only) The UUID to record to uniquely identify the
+#         repository. If omitted, a UUID is randomly generated.
 #
 # First successful run 2006 March 31 by Lawrence D'Oliveiro
 #    <ldo@geek-central.gen.nz>
@@ -77,6 +81,7 @@
 #    2007 March 12.
 # Allow for additional possibilities in TrailingDigits 2007 August 16.
 # Add support for binary files 2007 October 2.
+# Merge in Git support 2008 July 3.
 #-
 
 import sys
@@ -91,43 +96,105 @@ import getopt
 # Useful stuff
 #-
 
+def ToDateItems(DateTime) :
+	"""converts DateTime given as either a string of the form YYYYMMDDhhmmss or
+	a structure as might be returned by time.gmtime into a tuple (y, m, d, hh, mm, ss)."""
+	if type(DateTime) == str and len(DateTime) == 14 :
+		Result = \
+		  (
+			int(DateTime[0:4]),
+			int(DateTime[4:6]),
+			int(DateTime[6:8]),
+			int(DateTime[8:10]),
+			int(DateTime[10:12]),
+			int(DateTime[12:14])
+		  )
+	elif type(DateTime) == time.struct_time :
+		Result = DateTime[0:6]
+	elif type(DateTime) == int or type(DateTime) == float :
+		Result = time.gmtime(int(DateTime))[0:6]
+	else :
+		raise TypeError("can't format DateTime %s" % repr(DateTime))
+	#end if
+	return Result
+#end ToDateItems
+
+def FromDateItems(TheTime) :
+	"""converts TheTime to integer seconds."""
+	return calendar.timegm(ToDateItems(TheTime) + (None, None, 0))
+#end FromDateItems
+
+def FormatTime(TheTime) :
+	"""returns TheTime formatted as a YYYYMMDDhhmmss timestamp."""
+	return "%04d%02d%02d%02d%02d%02d" % ToDateItems(TheTime)
+#end FormatTime
+
+LocalTimeZone = None # default to interpreting user-specified times as UTC
+
+def ToUTCTime(TheTime) :
+	"""returns TheTime as a set of struct tm items in UTC. TheTime
+	is interpreted as local to LocalTimeZone if not None, else UTC."""
+	TheTime = FromDateItems(TheTime)
+	if LocalTimeZone != None :
+		# it was actually local time, convert to UTC
+		ZoneOffset = calendar.timegm(time.localtime(TheTime)) - TheTime
+		LocalTime = \
+		  (
+				time.gmtime(TheTime)[:8]
+			+
+				time.localtime(TheTime - ZoneOffset)[8:]
+		  )
+		  # compute (nearly) correct daylight-saving flag
+		  # could still be confused if too close to switchover time,
+		  # but what the heck
+		TheTime = time.mktime(LocalTime)
+	#end if
+	return time.gmtime(TheTime)
+#end ToUTCTime
+
+def ItemModTime(ItemName) :
+	"""returns the modified date/time for ItemName, appropriately
+	adjusted if it comes from a system where it was recorded as the
+	local time in LocalTimeZone."""
+	return ToUTCTime(os.stat(ItemName).st_mtime)
+#end ItemModTime
+
+#+
+# Dump format handling
+#
+# Common across formats:
+#
+#    RevisionProps -- mapping of properties for a commit. Recognized keys:
+#        author -- author/committer name
+#        log -- commit message
+#    ItemProps -- mapping of properties for a file/directory item. Recognized keys:
+#        executable -- (file only) boolean indicating whether file is executable
+#-
+
 class SvnDumpWriter :
 	"""encapsulates everything I know about the svnadmin dump format."""
 
 	@staticmethod
 	def FormatTime(DateTime) :
-		"""formats a date/time given as either a string of the form
-		YYYYMMDDhhmmss or a structure as might be returned by
-		time.gmtime for inclusion as a property value in a dump."""
-		if type(DateTime) == str and len(DateTime) == 14 :
-			Result = \
-			  (
-				int(DateTime[0:4]),
-				int(DateTime[4:6]),
-				int(DateTime[6:8]),
-				int(DateTime[8:10]),
-				int(DateTime[10:12]),
-				int(DateTime[12:14])
-			  )
-		elif type(DateTime) == time.struct_time :
-			Result = DateTime[0:6]
-		else :
-			raise TypeError("can't format DateTime \"%s\"" % DateTime)
-		#end if
-		return "%04d-%02d-%02dT%02d:%02d:%02d.000000Z" % Result
+		"""formats a date/time for inclusion as a property value in a dump."""
+		return "%04d-%02d-%02dT%02d:%02d:%02d.000000Z" % ToDateItems(DateTime)
 	#end FormatTime
 
 	@staticmethod
 	def FormatProps(PropsDict) :
 		"""returns a string containing properly-formatted representations
-		of the key-value pairs in PropsDict."""
+		of the key-value pairs in PropsDict. Note that entries with values
+		of None are ignored."""
 		Result = ""
-		for Key in PropsDict.iterkeys() :
-			Value = PropsDict[Key]
-			Result += \
-					"K %d\n%s\nV %d\n%s\n" \
-				% \
-					(len(Key), Key, len(Value), Value)
+		for Key, Value in PropsDict.iteritems() :
+			if Value != None :
+				Result += \
+				  (
+						"K %d\n%s\nV %d\n%s\n"
+					%
+						(len(Key), Key, len(Value), Value)
+				  )
+			#end if
 		#end for
 		return Result + "PROPS-END\n"
 	#end FormatProps
@@ -201,20 +268,40 @@ class SvnDumpWriter :
 
 	def WriteRevision(self, Date, RevisionProps, Items) :
 		"""writes a whole collection of item nodes as a single revision."""
-		self.NewRevision(Date, RevisionProps)
+		RevProps = {}
+		self.NewRevision \
+		  (
+			Date = Date,
+			PropsDict =
+				{
+					"svn:author" : RevisionProps.get("author"),
+					"svn:log" : RevisionProps.get("log"),
+				}
+		  )
 		for ThisItem in Items :
+			if ThisItem["action"] == "delete" :
+				NodeProps = None # no props allowed
+			else :
+				NodeProps = {}
+				  # always present even if empty -- is this how to
+				  # remove the svn:executable property?
+				if ThisItem.get("executable", False) :
+					NodeProps["svn:executable"] = "*"
+					 # sometimes I also see "svn:execute" set to "1"
+				#end if
+			#end if
 			self.WriteNode \
 			  (
 				Path = self.TrunkPrefix + ThisItem["path"],
 				Kind = ThisItem["kind"],
 				Action = ThisItem["action"],
-				Props = ThisItem.get("props", None),
+				Props = NodeProps,
 				Content = ThisItem.get("content", None)
 			  )
 		#end for
 	#end WriteRevision
 
-	def __init__(self, Dump, UUID, CreateDate, TrunkBranchesTags) :
+	def __init__(self, Dump, CreateDate, UUID, TrunkBranchesTags) :
 		"""Dump is the stream to which to write the contents of the
 		repository dump."""
 		self.Dump = Dump
@@ -234,46 +321,106 @@ class SvnDumpWriter :
 
 #end SvnDumpWriter
 
-def ToUTCTime(TheTime) :
-	"""returns TheTime as a set of struct tm items in UTC. TheTime
-	is interpreted as local to LocalTimeZone if specified, else UTC."""
-	if type(TheTime) == str and len(TheTime) == 14 :
-		TheTime = calendar.timegm \
-		  (
-			(
-				int(TheTime[0:4]),
-				int(TheTime[4:6]),
-				int(TheTime[6:8]),
-				int(TheTime[8:10]),
-				int(TheTime[10:12]),
-				int(TheTime[12:14]),
-				None,
-				None,
-				0,
-			)
-		  )
-	#end if
-	if LocalTimeZone != None :
-		# it was actually local time, convert to UTC
-		ZoneOffset = calendar.timegm(time.localtime(TheTime)) - TheTime
-		LocalTime = \
-				time.gmtime(TheTime)[:8] \
-			+ \
-				time.localtime(TheTime - ZoneOffset)[8:]
-		  # compute (nearly) correct daylight-saving flag
-		  # could still be confused if too close to switchover time,
-		  # but what the heck
-		TheTime = time.mktime(LocalTime)
-	#end if
-	return time.gmtime(TheTime)
-#end ToUTCTime
+class GitDumpWriter :
+	"""writes a dump suitable for reading by git-fast-import."""
 
-def ItemModTime(ItemName) :
-	"""returns the modified date/time for ItemName, appropriately
-	adjusted if it comes from a system where it was recorded as the
-	local time in LocalTimeZone."""
-	return ToUTCTime(os.stat(ItemName).st_mtime)
-#end ItemModTime
+	@staticmethod
+	def FormatTime(DateTime) :
+		"""formats DateTime in Git "raw" format. Always sets timezone part to UTC."""
+		return "%d +0000" % FromDateItems(ToUTCTime(DateTime))
+	#end FormatTime
+
+	def NewMark(self) :
+		# returns a new, unique mark ID.
+		self.LastMark += 1
+		return self.LastMark
+	#end if
+
+	def WriteRevision(self, Date, RevisionProps, Items) :
+		"""writes a whole collection of item nodes as a single revision."""
+		Files = []
+		for Item in Items :
+			if Item["kind"] == "file" and (Item["action"] == "add" or Item["action"] == "change") :
+				ItemMark = self.NewMark()
+				self.Dump.write \
+				  (
+						"blob\n"
+						"mark :%(id)d\n"
+						"data %(len)d\n"
+						"%(content)s\n"
+					%
+						{"id" : ItemMark, "len" : len(Item["content"]), "content" : Item["content"]}
+				  )
+				Files.append \
+					(
+						{
+							"path" : Item["path"],
+							"id" : ItemMark,
+							"executable" : Item.get("executable", False),
+						}
+					)
+			#end if
+		#end for
+		CommitMark = self.NewMark()
+		CommitMsg = RevisionProps.get("log", "")
+		self.Dump.write \
+		  (
+				"commit refs/heads/master\n"
+				"mark :%(id)d\n"
+				"author %(author)s %(when)s\n"
+				"committer %(author)s %(when)s\n"
+				"data %(loglen)d\n"
+				"%(log)s\n"
+			%
+				{
+					"id" : CommitMark,
+					"author" : RevisionProps["author"],
+					"when" : self.FormatTime(Date),
+					"loglen" : len(CommitMsg),
+					"log" : CommitMsg,
+				}
+		  )
+		if self.LastCommit != None :
+			self.Dump.write("from :%d\n" % self.LastCommit)
+		#end if
+		for Item in Files :
+			self.Dump.write \
+			  (
+					"M %(mode)s :%(id)d %(path)s\n"
+				%
+					{
+						"mode" : ("100644", "100755")[Item.get("executable", False)],
+						"id" : Item["id"],
+						"path" : Item["path"],
+					}
+			  )
+		#end for
+		for Item in Items :
+			if Item["kind"] == "file" and Item["action"] == "delete" :
+				self.Dump.write("D %s\n" % Item["path"])
+			#end if
+		#end if
+		self.Dump.write("\n") # optional
+		self.LastCommit = CommitMark
+	#end WriteRevision
+
+	def __init__(self, Dump) :
+		"""Dump is the stream to which to write the contents of the
+		repository dump."""
+		self.Dump = Dump
+		self.LastMark = 0
+		self.LastCommit = None
+		self.Dump.write \
+		  (
+			"# Git repository dump created by fake_vcs.\n"
+		  )
+	#end __init__
+
+#end GitDumpWriter
+
+#+
+# File content interpretation
+#-
 
 BinaryExtensions = set \
   ((
@@ -383,6 +530,7 @@ def GetChangedComment(OldComment, NewComment) :
 		"localtimezone=",
 		"replace=",
 		"trunk-branches-tags",
+		"type=",
 		"user=",
 		"uuid=",
 	]
@@ -393,9 +541,9 @@ CreateDate = None
 Deleting = {}
 Replacing = {}
 Replaced = {}
+RepositoryType = None
 UserName = os.environ["USER"]
 UUID = None
-LocalTimeZone = None
 TrunkBranchesTags = False
 for Keyword, Value in Opts :
 	if Keyword == "--autolog" :
@@ -416,6 +564,11 @@ for Keyword, Value in Opts :
 		sys.stderr.write("Replacement \"%s\" => \"%s\"\n" % (Old, New)) # debug
 	elif Keyword == "--trunk-branches-tags" :
 		TrunkBranchesTags = True
+	elif Keyword == "--type" :
+		RepositoryType = Value
+		if Value != "git" and Value != "svn" :
+			raise getopt.GetoptError("--type must be \"git\" or \"svn\"")
+		#end if
 	elif Keyword == "--user" :
 		UserName = Value
 	elif Keyword == "--uuid" :
@@ -425,22 +578,33 @@ for Keyword, Value in Opts :
 if len(Args) != 1 :
 	raise getopt.GetoptError("need exactly one arg, being working directory")
 #end if
-if CreateDate == None :
-	raise getopt.GetoptError("Missing --create=date")
+if RepositoryType == None :
+	raise getopt.GetoptError("Missing --type=type")
 #end if
+
+if RepositoryType == "git" :
+	if CreateDate != None or TrunkBranchesTags or UUID != None :
+		raise getopt.GetoptError \
+		  (
+			"Git repositories don't use --create, --trunk-branches-tags or --uuid"
+		  )
+	#end if
+elif RepositoryType == "svn" :
+	if CreateDate == None :
+		raise getopt.GetoptError("Missing --create=date for SVN")
+	#end if
+	if UUID == None :
+		UUID = open("/proc/sys/kernel/random/uuid").readline().rstrip("\n")
+	#end if
+#end if
+
 ItemsDir = Args[0]
 if not os.path.isdir(ItemsDir) :
 	raise getopt.GetoptError("\"%s\" is not a directory" % ItemsDir)
 #end if
-if UUID == None :
-	UUID = open("/proc/sys/kernel/random/uuid").readline().rstrip("\n")
-#end if
 if LocalTimeZone != None :
 	os.environ["TZ"] = LocalTimeZone
-	CreateDate = \
-			"%04d%02d%02d%02d%02d%02d" \
-		% \
-			ToUTCTime(CreateDate)[0:6]
+	CreateDate = FormatTime(ToUTCTime(CreateDate)[0:6])
 #end if
 for BaseName in Deleting :
 	Deleting[BaseName] = ToUTCTime(Deleting[BaseName])
@@ -521,7 +685,7 @@ def IncludeItems(ItemsDir, ParentName) :
 						Category,
 						Item,
 						ForBase,
-						SvnDumpWriter.FormatTime(ItemDate)
+						FormatTime(ItemDate)
 					)
 			  ) # debug
 		elif not os.path.islink(ItemPath) and os.path.isdir(ItemPath) :
@@ -564,13 +728,13 @@ for BaseName in Deleting :
 	#end if
 #end for
 for BaseName in BaseNames :
-	if \
-			not BaseNames[BaseName].has_key("parent") \
-		and \
-			not BaseNames[BaseName].has_key("replaced_by") \
-		and \
-			BaseName not in Deleting \
-	:
+	if (
+			not BaseNames[BaseName].has_key("parent")
+		and
+			not BaseNames[BaseName].has_key("replaced_by")
+		and
+			BaseName not in Deleting
+	) :
 		raise getopt.GetoptError \
 		  (
 				"item \"%s\" is not current but has no replacement or deletion"
@@ -596,13 +760,19 @@ Sequence.sort \
 	key = lambda Item : calendar.timegm(Item["date"])
   )
   # so entries are inserted in date order
-Dump = SvnDumpWriter \
-  (
-	Dump = sys.stdout,
-	UUID = UUID,
-	CreateDate = CreateDate,
-	TrunkBranchesTags = TrunkBranchesTags
-  )
+if RepositoryType == "git" :
+	Dump = GitDumpWriter(Dump = sys.stdout)
+elif RepositoryType == "svn" :
+	Dump = SvnDumpWriter \
+	  (
+		Dump = sys.stdout,
+		CreateDate = CreateDate,
+		UUID = UUID,
+		TrunkBranchesTags = TrunkBranchesTags
+	  )
+else :
+	raise AssertionError("unrecognized repository type %s" % repr(RepositoryType))
+#end if
 if len(Subdirs) != 0 :
 	CreateSubdirs = []
 	for Subdir in Subdirs :
@@ -624,7 +794,7 @@ if len(Subdirs) != 0 :
 	Dump.WriteRevision \
 	  (
 		Date = CreateDate, # might as well create all subdirectories at start
-		RevisionProps = {"svn:author" : UserName},
+		RevisionProps = {"author" : UserName},
 		Items = CreateSubdirs
 	  )
 #end if
@@ -633,11 +803,10 @@ ReplaceNewlines = re.compile("\\\015\\\012?|\\\012")
 if Autolog :
 	LastComments = {}
 #end if
-Executable = set()
 for Step in Sequence :
 	BaseName = Step["basename"]
 	Items = []
-	RevisionProps = {"svn:author" : UserName}
+	RevisionProps = {"author" : UserName}
 	if Step.get("action", None) == "delete" :
 		if BaseNames[BaseName]["nrsteps"] > 1 :
 			sys.stderr.write \
@@ -657,7 +826,7 @@ for Step in Sequence :
 				"action" : "delete",
 			}
 		Items.append(ThisItem)
-		sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
+		sys.stderr.write("%s: " % FormatTime(Step["date"]))
 		sys.stderr.write("del \"%s\"" % BaseName)
 	else :
 		if Replacing.has_key(BaseName) :
@@ -669,7 +838,7 @@ for Step in Sequence :
 						(Replacing[BaseName], BaseName)
 				  )
 			#end if
-			sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
+			sys.stderr.write("%s: " % FormatTime(Step["date"]))
 			sys.stderr.write("del \"%s\"\n" % Replacing[BaseName])
 			Items.append \
 			  (
@@ -701,11 +870,11 @@ for Step in Sequence :
 				#end if
 				LastComments[BaseName] = TheseComments
 				if ChangeLog != "" :
-					RevisionProps["svn:log"] = ChangeLog
+					RevisionProps["log"] = ChangeLog
 				#end if
 			#end if
 		#end if
-		sys.stderr.write("%s: " % SvnDumpWriter.FormatTime(Step["date"]))
+		sys.stderr.write("%s: " % FormatTime(Step["date"]))
 		if BaseName in Added :
 			sys.stderr.write("mod \"%s\" <= \"%s\"" % (BaseName, Step["path"]))
 			Action = "change"
@@ -714,29 +883,14 @@ for Step in Sequence :
 			Added.add(BaseName)
 			Action = "add"
 		#end if
-		ItemProps = None
-		if not BaseNames[BaseName]["binary"] and Content[:2] == "#!" :
-			if BaseName not in Executable :
-				ItemProps = {"svn:executable" : "*"}
-				# sometimes I also see "svn:execute" set to "1"
-				Executable.add(BaseName)
-			#end if
-		else :
-			if BaseName in Executable :
-				ItemProps = {} # is this how to remove the svn:executable property?
-				Executable.remove(BaseName)
-			#end if
-		#end if
 		ThisItem = \
 			{
 				"kind" : "file",
 				"path" : BaseNames[BaseName].get("parent", "") + BaseName,
+				"executable" : not BaseNames[BaseName]["binary"] and Content[:2] == "#!",
 				"action" : Action,
 				"content" : Content,
 			}
-		if ItemProps != None :
-			ThisItem["props"] = ItemProps
-		#end if
 		Items.append(ThisItem)
 	#end if
 	Dump.WriteRevision \
