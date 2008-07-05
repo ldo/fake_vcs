@@ -82,6 +82,7 @@
 # Allow for additional possibilities in TrailingDigits 2007 August 16.
 # Add support for binary files 2007 October 2.
 # Merge in Git support 2008 July 3.
+# Extra validation of username for Git 2008 July 5.
 #-
 
 import sys
@@ -589,6 +590,12 @@ if RepositoryType == "git" :
 			"Git repositories don't use --create, --trunk-branches-tags or --uuid"
 		  )
 	#end if
+	if re.search(r"\<.+\@.+\>$", UserName) == None :
+		raise getopt.GetoptError \
+		  (
+			"Git --user spec %s must contain e-mail address" % repr(UserName)
+		  )
+	#end if
 elif RepositoryType == "svn" :
 	if CreateDate == None :
 		raise getopt.GetoptError("Missing --create=date for SVN")
@@ -773,7 +780,7 @@ elif RepositoryType == "svn" :
 else :
 	raise AssertionError("unrecognized repository type %s" % repr(RepositoryType))
 #end if
-if len(Subdirs) != 0 :
+if RepositoryType == "svn" and len(Subdirs) != 0 :
 	CreateSubdirs = []
 	for Subdir in Subdirs :
 		CreateSubdirs.append \
