@@ -46,7 +46,7 @@ class GitDumpWriter :
 	@staticmethod
 	def FormatTime(DateTime) :
 		"""formats DateTime in Git "raw" format. Always sets timezone part to UTC."""
-		return "%d +0000" % FromDateItems(ToUTCTime(DateTime))
+		return "%d +0000" % DateTime
 	#end FormatTime
 
 	def NewMark(self) :
@@ -122,6 +122,28 @@ class GitDumpWriter :
 		self.Dump.write("\n") # optional
 		self.LastCommit = CommitMark
 	#end WriteRevision
+
+	def WriteTag(self, Date, RevisionProps, Name) :
+		"""writes a tag which is assumed to refer to the previous commit."""
+		CommitMsg = RevisionProps.get("log", "")
+		self.Dump.write \
+		  (
+				"tag %(name)s\n"
+				"from %(commitid)d\n"
+				"tagger %(author)s %(when)s\n"
+				"data %(loglen)d\n"
+				"%(log)s\n"
+			%
+				{
+					"name" : Name,
+					"commitid" : self.LastCommit,
+					"author" : RevisionProps["author"],
+					"when" : self.FormatTime(Date),
+					"loglen" : len(CommitMsg),
+					"log" : CommitMsg,
+				}
+		  )
+	#end WriteTag
 
 	def __init__(self, Dump) :
 		"""Dump is the stream to which to write the contents of the
@@ -220,60 +242,80 @@ class repo :
 		result.parent = parent
 		result.name = file_name
 		item = parent[file_name]
-		result.old = open(os.path.join(temp_dir, item["oldid"]), "r")
+		result.old = open(os.path.join(temp_dir, item["oldid"]), "r").readlines()
+		  # load entire file into memory so I can match lines with some leeway
 		result.new = open(os.path.join(temp_dir, item["newid"]), "w")
+		result.last_line_written = 0
 		result.line_nr = 1
+		result.delete_run_started = False
 		result.seek_to_line(line_nr)
 		return result
 	#end open_file
 
+	def flush_previous_lines(self) :
+		for i in range(0, self.line_nr - self.last_line_written - 1) :
+			self.new.write(self.old[i])
+		#end if
+		self.old = self.old[self.line_nr - self.last_line_written - 1:]
+		self.last_line_written = self.line_nr - 1
+	#end flush_previous_lines
+
 	def seek_to_line(self, line_nr) :
 		"""repositions the file to the specified line number, automatically
 		copying prior skipped lines to the new version of the file."""
-		line_nr -= self.line_nr
-		while True :
-			if line_nr == 0 :
-				break
-			line = self.old.readline()
-			# assert len(line) != 0, "seeking from %d by %d" % (self.line_nr, line_nr)
-			if line == "" :
-				break # seems that it can try to seek past EOF
-			self.new.write(line)
-			self.line_nr += 1
-			line_nr -= 1
-		#end while
+		assert line_nr > self.last_line_written
+		self.line_nr = min(line_nr, len(self.old) + self.last_line_written + 1)
+		self.delete_run_started = False
 	#end seek_to_line
 
 	def delete_line(self, line) :
 		"""discards the current line from the existing file, which must be equal
 		to line. line must end with newline."""
-		oldline = self.old.readline()
-		if oldline == "" :
-		  # trying to delete an empty line in an empty file -- ignore
-			assert line == "\n"
+		if line == "\n" and self.line_nr - self.last_line_written - 1 == len(self.old) :
+			pass # trying to delete an empty line at EOF -- ignore
+		elif line == self.old[self.line_nr - self.last_line_written - 1] :
+			pass # fine
+		elif not self.delete_run_started :
+			# try a sloppy match
+			if (
+					self.line_nr > self.last_line_written + 1
+				and
+					line == self.old[self.line_nr - self.last_line_written - 2]
+			) :
+				sys.stderr.write("delete_line: backing up 1\n") # debug
+				self.line_nr -= 1
+			elif (
+					self.line_nr - self.last_line_written < len(self.old)
+				and
+					line == self.old[self.line_nr - self.last_line_written]
+			) :
+				sys.stderr.write("delete_line: advancing 1\n") # debug
+				self.line_nr += 1
+			else :
+				raise RuntimeError("can't match line nr %d for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
+			#end if
 		else :
-			assert oldline == line
-			self.line_nr += 1
+			raise RuntimeError("line nr %d doesn't match for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
 		#end if
-		# and discard oldline
+		if self.line_nr - self.last_line_written - 1 < len(self.old) :
+			self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written] = []
+		#end if
+		self.delete_run_started = True # no more sloppy matches
 	#end delete_line
 
 	def add_line(self, line) :
 		"""adds a new line to the new file. line must end with newline."""
-		self.new.write(line)
+		self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written - 1] = [line]
+		self.line_nr += 1 # ensure lines don't end up in reverse order
+		self.delete_run_started = False
 	#end add_line
 
 	def close(self) :
 		"""Call this after finishing making all changes, to save the new version
 		of the file in place of the existing version. Returns the entire
 		contents of the new version."""
-		while True : # save rest of existing version
-			line = self.old.readline()
-			if line == "" :
-				break
-			self.new.write(line)
-		#end while
-		self.old.close()
+		self.line_nr = self.last_line_written + len(self.old) + 1 # flush out all remaining lines
+		self.flush_previous_lines()
 		self.new.flush()
 		self.new.close()
 		item = self.parent[self.name]
@@ -332,11 +374,12 @@ def SeqToDate(Seq) :
 # Mainline
 #-
 
-keep_temps = False
+KeepTemps = False
 Dump = GitDumpWriter(sys.stdout)
 PatchesDir = os.path.join(sys.argv[1], "_darcs", "patches")
 PatchDatePat = re.compile(r"^(\d{14})\-")
 AuthorDatePat = re.compile(r"^(.+)\*\*(\d{14})\]")
+PatchesDone = set()
 for \
 		Entry \
 	in \
@@ -350,6 +393,7 @@ for \
 	(Comment, Author, Seq, ExpectHunks) = ReadPatchHeader(Patch)
 	sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
 	if ExpectHunks :
+		Step = {}
 		opline = None
 		while True :
 			if opline == None :
@@ -367,6 +411,8 @@ for \
 				opline = None
 			elif op == "hunk" :
 				(filename, linenr) = opline[:-1].split(" ")
+				# Note there can be multiple consecutive hunks for the same
+				# filename. I don't bother to optimize for this for now
 				rev = repo.open_file(filename, int(linenr))
 				lines_added = 0
 				lines_deleted = 0
@@ -385,31 +431,57 @@ for \
 				#end while
 				contents = rev.close()
 				sys.stderr.write("hunk lines added/deleted: %d/%d\n" % (lines_added, lines_deleted)) # debug
+				if Step.has_key(filename) :
+					Step[filename]["content"] = contents
+				else :
+					Step[filename] = \
+						{
+							"kind" : "file",
+							"action" : "change",
+							"path" : filename,
+							"content" : contents,
+						}
+				#end if
 			else :
 				raise RuntimeError("unrecognized op %s" % op)
 			#end if
 		#end while
+		RevisionProps = \
+			{
+				"log" : Comment,
+				"author" : Author,
+			}
+		Dump.WriteRevision(SeqToDate(Seq), RevisionProps, Step.values())
+		PatchesDone.add(Seq)
 	else :
 		line = Patch.readline()
 		assert line == "<\n"
+		IncludingPatches = set()
 		while True :
 			line = Patch.readline()
 			if line == "> {\n" :
 				break
-			(Comment, _, Seq, ExpectHunks) = ReadPatchHeader(Patch, line)
+			(IncludeComment, _, IncludeSeq, ExpectHunks) = ReadPatchHeader(Patch, line)
 			assert not ExpectHunks
-			sys.stderr.write("tag %s from %s\n" % (Comment, Seq)) # debug
-			# more TBD
+			sys.stderr.write("tag %s from %s\n" % (IncludeComment, IncludeSeq)) # debug
+			IncludingPatches.add(IncludeSeq)
 		#end while
 		assert line == "> {\n"
 		line = Patch.readline()
 		assert line == "}\n"
-		# more TBD
+		assert IncludingPatches == PatchesDone, "patch sets don't match: %s vs %s = %s" % (repr(IncludingPatches), repr(PatchesDone), repr(IncludingPatches ^ PatchesDone))
+		assert Comment.startswith("TAG ")
+		Name = Comment[4:]
+		RevisionProps = \
+			{
+				"author" : Author,
+			}
+		Dump.WriteTag(SeqToDate(Seq), RevisionProps, Name)
+		PatchesDone.add(Seq)
 	#end if
-	# more TBD
 	Patch.close()
 #end for
 
-if not keep_temps :
+if not KeepTemps :
 	cleanup_temp_dir()
 #end if
