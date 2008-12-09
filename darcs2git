@@ -98,6 +98,10 @@ class GitDumpWriter :
 		#end for
 		CommitMark = self.NewMark()
 		CommitMsg = RevisionProps.get("log", "")
+		Author = RevisionProps["author"]
+		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
+			Author = "<" + Author + ">"
+		#end if
 		self.Dump.write \
 		  (
 				"commit refs/heads/%(branch)s\n"
@@ -110,7 +114,7 @@ class GitDumpWriter :
 				{
 					"branch" : RevisionProps.get("branch", "master"),
 					"id" : CommitMark,
-					"author" : RevisionProps["author"],
+					"author" : Author,
 					"when" : self.FormatTime(Date),
 					"loglen" : len(CommitMsg),
 					"log" : CommitMsg,
@@ -144,6 +148,10 @@ class GitDumpWriter :
 	def WriteTag(self, Date, RevisionProps, Name, CommitID) :
 		"""writes a tag which is assumed to refer to the previous commit."""
 		CommitMsg = RevisionProps.get("log", "")
+		Author = RevisionProps["author"]
+		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
+			Author = "<" + Author + ">"
+		#end if
 		self.Dump.write \
 		  (
 				"tag %(name)s\n"
@@ -155,7 +163,7 @@ class GitDumpWriter :
 				{
 					"name" : Name,
 					"commitid" : CommitID,
-					"author" : RevisionProps["author"],
+					"author" : Author,
 					"when" : self.FormatTime(Date),
 					"loglen" : len(CommitMsg),
 					"log" : CommitMsg,
