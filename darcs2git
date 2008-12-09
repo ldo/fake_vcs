@@ -101,6 +101,7 @@ class GitDumpWriter :
 		Author = RevisionProps["author"]
 		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
 			Author = "<" + Author + ">"
+			  # keep git happy
 		#end if
 		self.Dump.write \
 		  (
@@ -151,6 +152,7 @@ class GitDumpWriter :
 		Author = RevisionProps["author"]
 		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
 			Author = "<" + Author + ">"
+			  # keep git happy
 		#end if
 		self.Dump.write \
 		  (
@@ -459,6 +461,7 @@ def ProcessPatchHunks(Patch, Dump, ParentCommit = None, BranchName = None) :
 			# Note there can be multiple consecutive hunks for the same
 			# filename. I don't bother to optimize for this for now
 			rev = repo.open_file(filename, int(linenr))
+			filename = filename.lstrip("./") # only confuses git
 			lines_added = 0
 			lines_deleted = 0
 			while True :
@@ -528,10 +531,10 @@ for \
 			f for f in os.listdir(PatchesDir) if PatchDatePat.search(f) != None
 		  ) \
 :
-	# sys.stderr.write(Entry + "\n") # debug
 	(Patch, Comment, Author, Seq, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, Entry))
 	# sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
 	if ExpectHunks :
+		sys.stdout.write("# Patch: %s\n" % Entry)
 		CommitID = ProcessPatchHunks(Patch, Dump, PatchCommits[tuple(PatchesApplied)])
 		PatchFileNames[Seq] = Entry # in case I need to re-apply it on a different branch
 		PatchesApplied.append(Seq)
@@ -580,6 +583,7 @@ for \
 			for BranchPatchSeq in IncludingPatches[len(TagPatches):] :
 				(BranchPatch, _, _, _, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, PatchFileNames[BranchPatchSeq]))
 				assert ExpectHunks
+				sys.stdout.write("# Branch Patch: %s\n" % BranchPatchSeq)
 				CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], TagName)
 				BranchPatch.close()
 				PatchesApplied.append(Seq)
