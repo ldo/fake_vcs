@@ -281,6 +281,7 @@ class repo :
 		result.last_line_written = 0
 		result.line_nr = 1
 		result.delete_run_started = False
+		result.extra_line_at_end = False
 		result.seek_to_line(line_nr)
 		return result
 	#end open_file
@@ -299,6 +300,11 @@ class repo :
 		"""repositions the file to the specified line number, automatically
 		copying prior skipped lines to the new version of the file."""
 		assert line_nr > self.last_line_written
+		if not self.delete_run_started and line_nr > len(self.old) + self.last_line_written + 1 :
+			self.old.append("\n")
+			self.extra_line_at_end = True
+			  # see if this fixes some cases of blank lines ending up in the wrong place
+		#end if
 		self.line_nr = min(line_nr, len(self.old) + self.last_line_written + 1)
 		self.delete_run_started = False
 	#end seek_to_line
@@ -349,6 +355,9 @@ class repo :
 		"""Call this after finishing making all changes, to save the new version
 		of the file in place of the existing version. Returns the entire
 		contents of the new version."""
+		if self.extra_line_at_end and not self.delete_run_started and len(self.old) > 0 and self.old[-1] == "\n" :
+			del self.old[-1]
+		#end if
 		self.line_nr = self.last_line_written + len(self.old) + 1 # flush out all remaining lines
 		self.flush_previous_lines()
 		self.new.flush()
