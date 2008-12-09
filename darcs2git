@@ -9,12 +9,14 @@
 # contain a _darcs subdirectory. The dump file is written to standard output.
 #
 # Start of development 2008 December 4 by Lawrence D'Oliveiro <ldo@geek-central.gen.nz>.
+# Successful processing of tags 2008 December 8.
 #-
 
 import sys
 import os
 import calendar
 import re
+import copy
 import tempfile
 import gzip
 
@@ -22,7 +24,21 @@ import gzip
 # Miscellaneous useful stuff
 #-
 
+def matching_prefix(seq1, seq2) :
+	"""returns the longest initial part that seq1 and seq2 have in common."""
+	i = 0
+	while True :
+		if i == len(seq1) or i == len(seq2) :
+			break
+		if seq1[i] != seq2[i] :
+			break
+		i += 1
+	#end while
+	return seq1[:i]
+#end matching_prefix
+
 def delete_dir(dir) :
+	"""deletes a directory and all its contents."""
 	if os.path.isdir(dir) :
 		for parent, dirs, files in os.walk(dir, topdown = False) :
 			for item in files :
@@ -84,7 +100,7 @@ class GitDumpWriter :
 		CommitMsg = RevisionProps.get("log", "")
 		self.Dump.write \
 		  (
-				"commit refs/heads/master\n"
+				"commit refs/heads/%(branch)s\n"
 				"mark :%(id)d\n"
 				"author %(author)s %(when)s\n"
 				"committer %(author)s %(when)s\n"
@@ -92,6 +108,7 @@ class GitDumpWriter :
 				"%(log)s\n"
 			%
 				{
+					"branch" : RevisionProps.get("branch", "master"),
 					"id" : CommitMark,
 					"author" : RevisionProps["author"],
 					"when" : self.FormatTime(Date),
@@ -99,8 +116,9 @@ class GitDumpWriter :
 					"log" : CommitMsg,
 				}
 		  )
-		if self.LastCommit != None :
-			self.Dump.write("from :%d\n" % self.LastCommit)
+		FromCommit = RevisionProps.get("from_commit", self.LastCommit)
+		if FromCommit != None :
+			self.Dump.write("from :%d\n" % FromCommit)
 		#end if
 		for Item in Files :
 			self.Dump.write \
@@ -123,20 +141,20 @@ class GitDumpWriter :
 		self.LastCommit = CommitMark
 	#end WriteRevision
 
-	def WriteTag(self, Date, RevisionProps, Name) :
+	def WriteTag(self, Date, RevisionProps, Name, CommitID) :
 		"""writes a tag which is assumed to refer to the previous commit."""
 		CommitMsg = RevisionProps.get("log", "")
 		self.Dump.write \
 		  (
 				"tag %(name)s\n"
-				"from %(commitid)d\n"
+				"from :%(commitid)d\n"
 				"tagger %(author)s %(when)s\n"
 				"data %(loglen)d\n"
 				"%(log)s\n"
 			%
 				{
 					"name" : Name,
-					"commitid" : self.LastCommit,
+					"commitid" : CommitID,
 					"author" : RevisionProps["author"],
 					"when" : self.FormatTime(Date),
 					"loglen" : len(CommitMsg),
@@ -185,15 +203,19 @@ def cleanup_temp_dir() :
 #-
 
 class repo :
+	"""interpreting patches from a Darcs repository."""
 
 	files = {}
 	  # for keeping track of current state of repository files.
 	  # Keys are items in directory, values are dictionaries with
-	  # either a "children" key for a subdirectory, or "oldid" and
-	  # "newid" keys for a file, to be used for naming the temporary
-	  # copies of that file.
+	  # either a "children" key for a subdirectory, or "id" and
+	  # for a file, to be used for naming the temporary copy of
+	  # that file.
 	file_seq = 0
 	  # for assigning unique names to temporary files.
+	commits = {}
+	  # for saving different versions of files, indexed
+	  # by caller-supplied commit ids.
 
 	@classmethod
 	def find_container(self, path_name) :
@@ -223,14 +245,7 @@ class repo :
 		"""marks the creation of a new file within the repository tree."""
 		(parent, name) = self.find_container(file_name)
 		assert not parent.has_key(name)
-		create_temp_dir() # if not already done
-		self.file_seq += 1
-		f = open(os.path.join(temp_dir, str(self.file_seq)), "w")
-		  # create initial empty file
-		f.close()
-		parent[name] = {"oldid" : str(self.file_seq), "newid" : str(self.file_seq + 1)}
-		self.file_seq += 1
-		sys.stderr.write("add_file %s oldid %s newid %s\n" % (file_name, parent[name]["oldid"], parent[name]["newid"])) # debug
+		parent[name] = {} # no initial id assigned => empty file
 	#end add_file
 
 	@classmethod
@@ -242,9 +257,17 @@ class repo :
 		result.parent = parent
 		result.name = file_name
 		item = parent[file_name]
-		result.old = open(os.path.join(temp_dir, item["oldid"]), "r").readlines()
-		  # load entire file into memory so I can match lines with some leeway
-		result.new = open(os.path.join(temp_dir, item["newid"]), "w")
+		create_temp_dir() # if not already done
+		self.file_seq += 1
+		result.newid = str(self.file_seq)
+		if item.has_key("id") :
+			result.old = open(os.path.join(temp_dir, item["id"]), "r").readlines()
+			  # load entire file into memory so I can match lines with some leeway
+		else :
+			result.old = [] # empty new file
+		#end if
+		result.new = open(os.path.join(temp_dir, result.newid), "w")
+		# sys.stderr.write("repo.open_file: newid %s for %s\n" % (result.newid, file_name)) # debug
 		result.last_line_written = 0
 		result.line_nr = 1
 		result.delete_run_started = False
@@ -253,6 +276,8 @@ class repo :
 	#end open_file
 
 	def flush_previous_lines(self) :
+		"""ensure lines prior to self.line_nr have been saved to new version
+		of file."""
 		for i in range(0, self.line_nr - self.last_line_written - 1) :
 			self.new.write(self.old[i])
 		#end if
@@ -282,14 +307,14 @@ class repo :
 				and
 					line == self.old[self.line_nr - self.last_line_written - 2]
 			) :
-				sys.stderr.write("delete_line: backing up 1\n") # debug
+				# sys.stderr.write("delete_line: backing up 1\n") # debug
 				self.line_nr -= 1
 			elif (
 					self.line_nr - self.last_line_written < len(self.old)
 				and
 					line == self.old[self.line_nr - self.last_line_written]
 			) :
-				sys.stderr.write("delete_line: advancing 1\n") # debug
+				# sys.stderr.write("delete_line: advancing 1\n") # debug
 				self.line_nr += 1
 			else :
 				raise RuntimeError("can't match line nr %d for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
@@ -319,11 +344,30 @@ class repo :
 		self.new.flush()
 		self.new.close()
 		item = self.parent[self.name]
-		oldname = os.path.join(temp_dir, item["oldid"])
-		newname = os.path.join(temp_dir, item["newid"])
-		os.rename(newname, oldname)
-		return open(oldname, "r").read()
+		if False : # item.has_key("id") : # don't delete old version, might belong to a previous commit
+			os.unlink(os.path.join(temp_dir, item["id"]))
+		#end if
+		item["id"] = self.newid
+		return open(os.path.join(temp_dir, item["id"]), "r").read()
 	#end close
+
+	@classmethod
+	def save_commit(self, commitid) :
+		"""saves the last-written state of all files as a commit with the
+		specified id."""
+		# sys.stderr.write("repo.save_commit %s = %s\n:" % (commitid, repr(self.files))) # debug
+		if not self.commits.has_key(commitid) : # only do if not already done
+			self.commits[commitid] = copy.deepcopy(self.files)
+		#end if
+	#end save_commit
+
+	@classmethod
+	def restore_commit(self, commitid) :
+		"""restores the state of all files to that previously saved
+		under the specified commit id."""
+		# sys.stderr.write("repo.restore_commit %s\n:" % commitid) # debug
+		self.files = copy.deepcopy(self.commits[commitid])
+	#end restore_commit
 
 #end repo
 
@@ -331,7 +375,7 @@ class repo :
 # Darcs parsing
 #-
 
-def ReadPatchHeader(FromFile, FirstLine = None) :
+def ReadPatchHeader(Patch, FirstLine = None) :
 	"""reads the header part of a Darcs patch file."""
 	if FirstLine != None :
 		Comment = FirstLine
@@ -370,6 +414,91 @@ def SeqToDate(Seq) :
 	  )
 #end SeqToDate
 
+def OpenPatchFile(FileName) :
+	"""opens a patch file and returns the preparsed header part, along
+	with a file object for reading the rest of the contents."""
+	Patch = (open, gzip.GzipFile)[FileName.endswith(".gz")](FileName, "r")
+	(Comment, Author, Seq, ExpectHunks) = ReadPatchHeader(Patch)
+	return (Patch, Comment, Author, Seq, ExpectHunks)
+#end OpenPatchFile
+
+def ProcessPatchHunks(Patch, Dump, ParentCommit = None, BranchName = None) :
+	"""assumes that the contents of Patch will consist of "adddir", "addfile"
+	and "hunk" directives. Reads and processes these, applying the changes
+	to the state of repo, writing the result as a new revision via Dump
+	and saving it as a commit in repo."""
+	if ParentCommit != None :
+		repo.restore_commit(ParentCommit)
+	#end if
+	Step = {}
+	opline = None
+	while True :
+		if opline == None :
+			opline = Patch.readline()
+		#end if
+		if opline == "}\n" :
+			break
+		# sys.stderr.write("opline: %s" % opline) # debug
+		(op, opline) = opline.split(" ", 1)
+		if op == "adddir" :
+			repo.add_dir(opline[:-1])
+			opline = None
+		elif op == "addfile" :
+			repo.add_file(opline[:-1])
+			opline = None
+		elif op == "hunk" :
+			(filename, linenr) = opline[:-1].split(" ")
+			# Note there can be multiple consecutive hunks for the same
+			# filename. I don't bother to optimize for this for now
+			rev = repo.open_file(filename, int(linenr))
+			lines_added = 0
+			lines_deleted = 0
+			while True :
+				line = Patch.readline()
+				if line.startswith("-") :
+					rev.delete_line(line[1:])
+					lines_deleted += 1
+				elif line.startswith("+")  :
+					rev.add_line(line[1:])
+					lines_added += 1
+				else :
+					opline = line
+					break
+				#end if
+			#end while
+			contents = rev.close()
+			# sys.stderr.write("hunk lines added/deleted: %d/%d\n" % (lines_added, lines_deleted)) # debug
+			if Step.has_key(filename) :
+				Step[filename]["content"] = contents
+			else :
+				Step[filename] = \
+					{
+						"kind" : "file",
+						"action" : "change",
+						"path" : filename,
+						"content" : contents,
+					}
+			#end if
+		else :
+			raise RuntimeError("unrecognized op %s" % op)
+		#end if
+	#end while
+	RevisionProps = \
+		{
+			"log" : Comment,
+			"author" : Author,
+		}
+	if ParentCommit != None :
+		RevisionProps["from_commit"] = ParentCommit
+	#end if
+	if BranchName != None :
+		RevisionProps["branch"] = BranchName
+	#end if
+	Dump.WriteRevision(SeqToDate(Seq), RevisionProps, Step.values())
+	repo.save_commit(Dump.LastCommit)
+	return Dump.LastCommit
+#end ProcessPatchHunks
+
 #+
 # Mainline
 #-
@@ -379,7 +508,10 @@ Dump = GitDumpWriter(sys.stdout)
 PatchesDir = os.path.join(sys.argv[1], "_darcs", "patches")
 PatchDatePat = re.compile(r"^(\d{14})\-")
 AuthorDatePat = re.compile(r"^(.+)\*\*(\d{14})\]")
-PatchesDone = set()
+PatchFileNames = {} # saved full pathnames of patch files keyed by patch sequence ID
+PatchesApplied = []
+PatchCommits = {() : None} # mapping from sequences of patches applied to corresponding commit IDs
+Tags = {} # patches that a tag refers to, for expanding references to tag
 for \
 		Entry \
 	in \
@@ -388,72 +520,16 @@ for \
 			f for f in os.listdir(PatchesDir) if PatchDatePat.search(f) != None
 		  ) \
 :
-	sys.stderr.write(Entry + "\n") # debug
-	Patch = (open, gzip.GzipFile)[Entry.endswith(".gz")](os.path.join(PatchesDir, Entry), "r")
-	(Comment, Author, Seq, ExpectHunks) = ReadPatchHeader(Patch)
-	sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
+	# sys.stderr.write(Entry + "\n") # debug
+	(Patch, Comment, Author, Seq, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, Entry))
+	# sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
 	if ExpectHunks :
-		Step = {}
-		opline = None
-		while True :
-			if opline == None :
-				opline = Patch.readline()
-			#end if
-			if opline == "}\n" :
-				break
-			sys.stderr.write("opline: %s" % opline) # debug
-			(op, opline) = opline.split(" ", 1)
-			if op == "adddir" :
-				repo.add_dir(opline[:-1])
-				opline = None
-			elif op == "addfile" :
-				repo.add_file(opline[:-1])
-				opline = None
-			elif op == "hunk" :
-				(filename, linenr) = opline[:-1].split(" ")
-				# Note there can be multiple consecutive hunks for the same
-				# filename. I don't bother to optimize for this for now
-				rev = repo.open_file(filename, int(linenr))
-				lines_added = 0
-				lines_deleted = 0
-				while True :
-					line = Patch.readline()
-					if line.startswith("-") :
-						rev.delete_line(line[1:])
-						lines_deleted += 1
-					elif line.startswith("+")  :
-						rev.add_line(line[1:])
-						lines_added += 1
-					else :
-						opline = line
-						break
-					#end if
-				#end while
-				contents = rev.close()
-				sys.stderr.write("hunk lines added/deleted: %d/%d\n" % (lines_added, lines_deleted)) # debug
-				if Step.has_key(filename) :
-					Step[filename]["content"] = contents
-				else :
-					Step[filename] = \
-						{
-							"kind" : "file",
-							"action" : "change",
-							"path" : filename,
-							"content" : contents,
-						}
-				#end if
-			else :
-				raise RuntimeError("unrecognized op %s" % op)
-			#end if
-		#end while
-		RevisionProps = \
-			{
-				"log" : Comment,
-				"author" : Author,
-			}
-		Dump.WriteRevision(SeqToDate(Seq), RevisionProps, Step.values())
-		PatchesDone.add(Seq)
+		CommitID = ProcessPatchHunks(Patch, Dump, PatchCommits[tuple(PatchesApplied)])
+		PatchFileNames[Seq] = Entry # in case I need to re-apply it on a different branch
+		PatchesApplied.append(Seq)
+		PatchCommits[tuple(PatchesApplied)] = CommitID
 	else :
+		# this "patch" is a tag definition.
 		line = Patch.readline()
 		assert line == "<\n"
 		IncludingPatches = set()
@@ -463,21 +539,52 @@ for \
 				break
 			(IncludeComment, _, IncludeSeq, ExpectHunks) = ReadPatchHeader(Patch, line)
 			assert not ExpectHunks
-			sys.stderr.write("tag %s from %s\n" % (IncludeComment, IncludeSeq)) # debug
+			# sys.stderr.write("tag %s from %s\n" % (IncludeComment, IncludeSeq)) # debug
 			IncludingPatches.add(IncludeSeq)
+			TagPatches = Tags.get(IncludeSeq)
+			if TagPatches != None :
+				IncludingPatches.update(TagPatches) # include patches that tag refers to
+				IncludingPatches.remove(IncludeSeq)
+			#end if
 		#end while
+		IncludingPatches = sorted(tuple(IncludingPatches))
 		assert line == "> {\n"
 		line = Patch.readline()
 		assert line == "}\n"
-		assert IncludingPatches == PatchesDone, "patch sets don't match: %s vs %s = %s" % (repr(IncludingPatches), repr(PatchesDone), repr(IncludingPatches ^ PatchesDone))
 		assert Comment.startswith("TAG ")
-		Name = Comment[4:]
+		TagName = Comment[4:].rstrip("\n")
 		RevisionProps = \
 			{
 				"author" : Author,
+				"branch" : TagName,
 			}
-		Dump.WriteTag(SeqToDate(Seq), RevisionProps, Name)
-		PatchesDone.add(Seq)
+		assert len(set(IncludingPatches) - set(PatchesApplied)) == 0, "tag references patches not yet seen: %s - %s = %s" % (set(IncludingPatches), repr(set(PatchesApplied)), repr(set(IncludingPatches) - set(PatchesApplied)))
+		TagPatches = matching_prefix(tuple(IncludingPatches), tuple(PatchesApplied))
+		CommitID = PatchCommits[TagPatches]
+		if len(TagPatches) < len(IncludingPatches)  :
+			# need to create a branch
+			# sys.stderr.write("branch %s from %s omitting %s\n" % (repr(IncludingPatches), repr(TagPatches), repr(PatchesApplied[len(TagPatches):]))) # debug
+			SaveMasterCommit = Dump.LastCommit
+			repo.save_commit(SaveMasterCommit)
+			# sys.stderr.write("branch %s from commit :%s\n" % (TagName, str(CommitID))) # debug
+			SavePatchesApplied = PatchesApplied
+			PatchesApplied = list(TagPatches)
+			for BranchPatchSeq in IncludingPatches[len(TagPatches):] :
+				(BranchPatch, _, _, _, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, PatchFileNames[BranchPatchSeq]))
+				assert ExpectHunks
+				CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], TagName)
+				BranchPatch.close()
+				PatchesApplied.append(Seq)
+				PatchCommits[tuple(PatchesApplied)] = CommitID
+			#end for
+			PatchesApplied = SavePatchesApplied
+			repo.restore_commit(SaveMasterCommit)
+		#end if
+		Tags[Seq] = set(IncludingPatches)
+		Dump.WriteTag(SeqToDate(Seq), RevisionProps, TagName, CommitID)
+		PatchFileNames[Seq] = Entry
+		# PatchesApplied.append(Seq)
+		# PatchCommits[tuple(PatchesApplied)] = CommitID
 	#end if
 	Patch.close()
 #end for
