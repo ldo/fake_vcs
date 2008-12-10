@@ -279,6 +279,8 @@ class repo :
 		result.new = open(os.path.join(temp_dir, result.newid), "w")
 		# sys.stderr.write("repo.open_file: newid %s for %s\n" % (result.newid, file_name)) # debug
 		result.last_line_written = 0
+		  # could get rid of this, I don't actually use the ability to partially
+		  # write out new file
 		result.line_nr = 1
 		result.delete_run_started = False
 		result.extra_line_at_end = False
@@ -463,8 +465,17 @@ def ProcessPatchHunks(Patch, Dump, ParentCommit = None, BranchName = None) :
 			repo.add_dir(opline[:-1])
 			opline = None
 		elif op == "addfile" :
-			repo.add_file(opline[:-1])
+			filename = opline[:-1]
+			repo.add_file(filename)
+			filename = filename.lstrip("./") # only confuses git
 			opline = None
+			Step[filename] = \
+				{
+					"kind" : "file",
+					"action" : "add", # actually "add" and "change" are the same to GitDumpWriter
+					"path" : filename,
+					"content" : "", # ensure initial empty file exists, at least
+				}
 		elif op == "hunk" :
 			(filename, linenr) = opline[:-1].split(" ")
 			# Note there can be multiple consecutive hunks for the same
