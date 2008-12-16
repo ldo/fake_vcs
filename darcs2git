@@ -584,10 +584,10 @@ for \
 		assert line == "}\n"
 		assert Comment.startswith("TAG ")
 		TagName = Comment[4:].rstrip("\n")
+		BranchName = "b-" + TagName # avoid name-ambiguity warnings from git
 		RevisionProps = \
 			{
 				"author" : Author,
-				"branch" : TagName,
 			}
 		assert len(set(IncludingPatches) - set(PatchesApplied)) == 0, "tag references patches not yet seen: %s - %s = %s" % (set(IncludingPatches), repr(set(PatchesApplied)), repr(set(IncludingPatches) - set(PatchesApplied)))
 		TagPatches = matching_prefix(tuple(IncludingPatches), tuple(PatchesApplied))
@@ -597,14 +597,14 @@ for \
 			# sys.stderr.write("branch %s from %s omitting %s\n" % (repr(IncludingPatches), repr(TagPatches), repr(PatchesApplied[len(TagPatches):]))) # debug
 			SaveMasterCommit = Dump.LastCommit
 			repo.save_commit(SaveMasterCommit)
-			# sys.stderr.write("branch %s from commit :%s\n" % (TagName, str(CommitID))) # debug
+			# sys.stderr.write("branch %s from commit :%s\n" % (BranchName, str(CommitID))) # debug
 			SavePatchesApplied = PatchesApplied
 			PatchesApplied = list(TagPatches)
 			for BranchPatchSeq in IncludingPatches[len(TagPatches):] :
 				(BranchPatch, _, _, _, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, PatchFileNames[BranchPatchSeq]))
 				assert ExpectHunks
 				sys.stdout.write("# Branch Patch: %s\n" % BranchPatchSeq)
-				CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], TagName)
+				CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], BranchName)
 				BranchPatch.close()
 				PatchesApplied.append(Seq)
 				PatchCommits[tuple(PatchesApplied)] = CommitID
