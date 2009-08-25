@@ -1,0 +1,143 @@
+#!/usr/bin/python
+#+
+# This script adds a commit to a Git repository for a change to a single
+# specified file, faking the commit time from the last-modified time of
+# the file.
+#
+# Invoke this script as follows:
+#
+#     fake_git filename msg
+#
+# Valid options are:
+#
+#     --useremail=address
+#         The e-mail address to record in the repository commit entries. If
+#         omitted, git will take it from your global git configuration.
+#     --username=username
+#         The username to record in the repository commit entries. If
+#         omitted, defaults to the value from your global git configuration, or if
+#         not there, that of the USER environment variable.
+#
+# Created by Lawrence D'Oliveiro <ldo@geek-central.gen.nz>.
+#-
+
+import sys
+import os
+import subprocess
+import re
+import getopt
+
+#+
+# Useful stuff
+#-
+
+def SpawnOut(Cmd, Env = None, Input = None, AbortOnError = True) :
+	"""executes Cmd in a subprocess, returning its output as the
+	function result. Signals any execution failure."""
+	sys.stderr.write("SpawnOut %s {%s}\n" % (repr(Cmd), repr(Env))) # debug
+	if Input != None : # debug
+		sys.stderr.write(" Input = %s\n" % repr(Input))
+	#end if
+	Child = subprocess.Popen \
+	  (
+		args = Cmd,
+		stdin = subprocess.PIPE,
+		stdout = subprocess.PIPE,
+		shell = True,
+		env = Env
+	  )
+	(Stdout, Stderr) = Child.communicate(Input)
+	if AbortOnError and Child.returncode != 0 :
+		raise RuntimeError("SpawnOut: child status %d" % Child.returncode)
+	#end if
+	return Stdout
+#end SpawnOut
+
+def ShellEscape(Arg) :
+	"""returns Arg suitably escaped for use as a command-line argument
+	to the Shell."""
+	return \
+		re.sub \
+		  (
+			r"[\<\>\"\'\|\&\$\#\;\(\)\[\]\`\~\ \\]",
+			lambda Match : "\\" + Match.group(0),
+			Arg
+		  )
+		  # Need to catch anything that might be meaningful to shell
+#end ShellEscape
+
+#+
+# Mainline
+#-
+
+(Opts, Args) = getopt.getopt \
+  (
+	sys.argv[1:],
+	"",
+	[
+		"useremail=",
+		"username=",
+	]
+  )
+UserEmail = SpawnOut("git config user.email").rstrip("\n")
+if UserEmail == "" :
+	UserEmail = None
+#end if
+UserName = SpawnOut("git config user.name").rstrip("\n")
+if UserName == "" :
+	UserName = os.environ["USER"]
+#end if
+for Keyword, Value in Opts :
+	if Keyword == "--useremail" :
+		UserEmail = Value
+	elif Keyword == "--username" :
+		UserName = Value
+	#end if
+#end for
+if len(Args) != 2 :
+	raise getopt.GetoptError("need exactly two args, being the filename and the commit message")
+#end if
+Pathname, CommitMsg = Args
+
+RepoDir = os.getcwd()
+if not os.path.isdir(RepoDir) :
+	raise getopt.GetoptError("\"%s\" is not a directory" % RepoDir)
+#end if
+if not os.path.isdir(os.path.join(RepoDir, ".git")) :
+	raise getopt.GetoptError("\"%s\" is not a git repository" % RepoDir)
+#end if
+# os.chdir(RepoDir) # already there
+PrevHead = SpawnOut("git show-ref -h", AbortOnError = False).split("\n")[0]
+  # might fail for empty repository
+if PrevHead != "" :
+	PrevHead = PrevHead.split(" ")[0] # assume this is HEAD commit
+else :
+	PrevHead = None
+#end if
+CommitTime = str(int(os.stat(Pathname).st_mtime))
+SpawnOut("git add %s" % ShellEscape(Pathname))
+Tree = SpawnOut("git write-tree").rstrip("\n")
+Cmd = "git commit-tree %s" % Tree
+if PrevHead != None :
+	Cmd += " -p %s" % PrevHead
+#end if
+RevisionEnv = \
+  {
+	"GIT_AUTHOR_NAME" : UserName,
+	"GIT_AUTHOR_DATE" : CommitTime,
+	"GIT_COMMITTER_NAME" : UserName,
+	"GIT_COMMITTER_DATE" : CommitTime,
+	"TZ" : "UTC",
+	  # local timezones should only be relevant in output displays, not in repository
+  }
+if UserEmail != None :
+	RevisionEnv["GIT_AUTHOR_EMAIL"] = UserEmail
+	RevisionEnv["GIT_COMMITTER_EMAIL"] = UserEmail
+#end if
+NewHead = SpawnOut \
+  (
+	Cmd = Cmd,
+	Env = RevisionEnv,
+	Input = CommitMsg
+  ).rstrip("\n")
+SpawnOut("git reset --hard %s" % NewHead)
