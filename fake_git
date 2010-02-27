@@ -107,7 +107,7 @@ if not os.path.isdir(os.path.join(RepoDir, ".git")) :
 	raise getopt.GetoptError("\"%s\" is not a git repository" % RepoDir)
 #end if
 # os.chdir(RepoDir) # already there
-PrevHead = SpawnOut("git show-ref -h", AbortOnError = False).split("\n")[0]
+PrevHead = SpawnOut("git show-ref --head", AbortOnError = False).split("\n")[0]
   # might fail for empty repository
 if PrevHead != "" :
 	PrevHead = PrevHead.split(" ")[0] # assume this is HEAD commit
