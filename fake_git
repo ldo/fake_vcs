@@ -140,4 +140,4 @@ NewHead = SpawnOut \
 	Env = RevisionEnv,
 	Input = CommitMsg
   ).rstrip("\n")
-SpawnOut("git reset --hard %s" % NewHead)
+SpawnOut("git reset --soft %s" % NewHead)
