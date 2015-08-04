@@ -103,16 +103,24 @@ RepoDir = os.getcwd()
 if not os.path.isdir(RepoDir) :
     raise getopt.GetoptError("\"%s\" is not a directory" % RepoDir)
 #end if
-if not os.path.isdir(os.path.join(RepoDir, ".git")) :
+GitDir = os.path.join(RepoDir, ".git")
+if not os.path.isdir(GitDir) :
     raise getopt.GetoptError("\"%s\" is not a git repository" % RepoDir)
 #end if
 # os.chdir(RepoDir) # already there
-PrevHead = SpawnOut("git show-ref --head", AbortOnError = False).split("\n")[0]
+Branch = open(os.path.join(GitDir, "HEAD"), "r").readline().strip().split(" ")[1]
+PrevHead = None
+for Line in SpawnOut("git show-ref --head", AbortOnError = False).split("\n") :
   # might fail for empty repository
-if PrevHead != "" :
+    if Line != "" :
+        Id, Name = Line.split(" ", 1)
+        if Name == Branch :
+            PrevHead = Id
+            break
+        #end if
+    #end if
+if PrevHead != None :
     PrevHead = PrevHead.split(" ")[0] # assume this is HEAD commit
-else :
-    PrevHead = None
 #end if
 CommitTime = str(int(os.stat(Pathname).st_mtime))
 SpawnOut("git add %s" % ShellEscape(Pathname))
