@@ -25,31 +25,31 @@ import gzip
 #-
 
 def matching_prefix(seq1, seq2) :
-	"""returns the longest initial part that seq1 and seq2 have in common."""
-	i = 0
-	while True :
-		if i == len(seq1) or i == len(seq2) :
-			break
-		if seq1[i] != seq2[i] :
-			break
-		i += 1
-	#end while
-	return seq1[:i]
+    """returns the longest initial part that seq1 and seq2 have in common."""
+    i = 0
+    while True :
+        if i == len(seq1) or i == len(seq2) :
+            break
+        if seq1[i] != seq2[i] :
+            break
+        i += 1
+    #end while
+    return seq1[:i]
 #end matching_prefix
 
 def delete_dir(dir) :
-	"""deletes a directory and all its contents."""
-	if os.path.isdir(dir) :
-		for parent, dirs, files in os.walk(dir, topdown = False) :
-			for item in files :
-				os.remove(os.path.join(parent, item))
-			#end for
-			for item in dirs :
-				os.rmdir(os.path.join(parent, item))
-			#end for
-		#end for
-		os.rmdir(dir)
-	#end if
+    """deletes a directory and all its contents."""
+    if os.path.isdir(dir) :
+        for parent, dirs, files in os.walk(dir, topdown = False) :
+            for item in files :
+                os.remove(os.path.join(parent, item))
+            #end for
+            for item in dirs :
+                os.rmdir(os.path.join(parent, item))
+            #end for
+        #end for
+        os.rmdir(dir)
+    #end if
 #end delete_dir
 
 #+
@@ -57,133 +57,133 @@ def delete_dir(dir) :
 #-
 
 class GitDumpWriter :
-	"""writes a dump suitable for reading by git-fast-import."""
+    """writes a dump suitable for reading by git-fast-import."""
 
-	@staticmethod
-	def FormatTime(DateTime) :
-		"""formats DateTime in Git "raw" format. Always sets timezone part to UTC."""
-		return "%d +0000" % DateTime
-	#end FormatTime
+    @staticmethod
+    def FormatTime(DateTime) :
+        """formats DateTime in Git "raw" format. Always sets timezone part to UTC."""
+        return "%d +0000" % DateTime
+    #end FormatTime
 
-	def NewMark(self) :
-		# returns a new, unique mark ID.
-		self.LastMark += 1
-		return self.LastMark
-	#end if
+    def NewMark(self) :
+        # returns a new, unique mark ID.
+        self.LastMark += 1
+        return self.LastMark
+    #end if
 
-	def WriteRevision(self, Date, RevisionProps, Items) :
-		"""writes a whole collection of item nodes as a single revision."""
-		Files = []
-		for Item in Items :
-			if Item["kind"] == "file" and (Item["action"] == "add" or Item["action"] == "change") :
-				ItemMark = self.NewMark()
-				self.Dump.write \
-				  (
-						"blob\n"
-						"mark :%(id)d\n"
-						"data %(len)d\n"
-						"%(content)s\n"
-					%
-						{"id" : ItemMark, "len" : len(Item["content"]), "content" : Item["content"]}
-				  )
-				Files.append \
-					(
-						{
-							"path" : Item["path"],
-							"id" : ItemMark,
-							"executable" : Item.get("executable", False),
-						}
-					)
-			#end if
-		#end for
-		CommitMark = self.NewMark()
-		CommitMsg = RevisionProps.get("log", "")
-		Author = RevisionProps["author"]
-		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
-			Author = "<" + Author + ">"
-			  # keep git happy
-		#end if
-		self.Dump.write \
-		  (
-				"commit refs/heads/%(branch)s\n"
-				"mark :%(id)d\n"
-				"author %(author)s %(when)s\n"
-				"committer %(author)s %(when)s\n"
-				"data %(loglen)d\n"
-				"%(log)s\n"
-			%
-				{
-					"branch" : RevisionProps.get("branch", "master"),
-					"id" : CommitMark,
-					"author" : Author,
-					"when" : self.FormatTime(Date),
-					"loglen" : len(CommitMsg),
-					"log" : CommitMsg,
-				}
-		  )
-		FromCommit = RevisionProps.get("from_commit", self.LastCommit)
-		if FromCommit != None :
-			self.Dump.write("from :%d\n" % FromCommit)
-		#end if
-		for Item in Files :
-			self.Dump.write \
-			  (
-					"M %(mode)s :%(id)d %(path)s\n"
-				%
-					{
-						"mode" : ("100644", "100755")[Item.get("executable", False)],
-						"id" : Item["id"],
-						"path" : Item["path"],
-					}
-			  )
-		#end for
-		for Item in Items :
-			if Item["kind"] == "file" and Item["action"] == "delete" :
-				self.Dump.write("D %s\n" % Item["path"])
-			#end if
-		#end if
-		self.Dump.write("\n") # optional
-		self.LastCommit = CommitMark
-	#end WriteRevision
+    def WriteRevision(self, Date, RevisionProps, Items) :
+        """writes a whole collection of item nodes as a single revision."""
+        Files = []
+        for Item in Items :
+            if Item["kind"] == "file" and (Item["action"] == "add" or Item["action"] == "change") :
+                ItemMark = self.NewMark()
+                self.Dump.write \
+                  (
+                        "blob\n"
+                        "mark :%(id)d\n"
+                        "data %(len)d\n"
+                        "%(content)s\n"
+                    %
+                        {"id" : ItemMark, "len" : len(Item["content"]), "content" : Item["content"]}
+                  )
+                Files.append \
+                    (
+                        {
+                            "path" : Item["path"],
+                            "id" : ItemMark,
+                            "executable" : Item.get("executable", False),
+                        }
+                    )
+            #end if
+        #end for
+        CommitMark = self.NewMark()
+        CommitMsg = RevisionProps.get("log", "")
+        Author = RevisionProps["author"]
+        if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
+            Author = "<" + Author + ">"
+              # keep git happy
+        #end if
+        self.Dump.write \
+          (
+                "commit refs/heads/%(branch)s\n"
+                "mark :%(id)d\n"
+                "author %(author)s %(when)s\n"
+                "committer %(author)s %(when)s\n"
+                "data %(loglen)d\n"
+                "%(log)s\n"
+            %
+                {
+                    "branch" : RevisionProps.get("branch", "master"),
+                    "id" : CommitMark,
+                    "author" : Author,
+                    "when" : self.FormatTime(Date),
+                    "loglen" : len(CommitMsg),
+                    "log" : CommitMsg,
+                }
+          )
+        FromCommit = RevisionProps.get("from_commit", self.LastCommit)
+        if FromCommit != None :
+            self.Dump.write("from :%d\n" % FromCommit)
+        #end if
+        for Item in Files :
+            self.Dump.write \
+              (
+                    "M %(mode)s :%(id)d %(path)s\n"
+                %
+                    {
+                        "mode" : ("100644", "100755")[Item.get("executable", False)],
+                        "id" : Item["id"],
+                        "path" : Item["path"],
+                    }
+              )
+        #end for
+        for Item in Items :
+            if Item["kind"] == "file" and Item["action"] == "delete" :
+                self.Dump.write("D %s\n" % Item["path"])
+            #end if
+        #end if
+        self.Dump.write("\n") # optional
+        self.LastCommit = CommitMark
+    #end WriteRevision
 
-	def WriteTag(self, Date, RevisionProps, Name, CommitID) :
-		"""writes a tag which is assumed to refer to the previous commit."""
-		CommitMsg = RevisionProps.get("log", "")
-		Author = RevisionProps["author"]
-		if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
-			Author = "<" + Author + ">"
-			  # keep git happy
-		#end if
-		self.Dump.write \
-		  (
-				"tag %(name)s\n"
-				"from :%(commitid)d\n"
-				"tagger %(author)s %(when)s\n"
-				"data %(loglen)d\n"
-				"%(log)s\n"
-			%
-				{
-					"name" : Name,
-					"commitid" : CommitID,
-					"author" : Author,
-					"when" : self.FormatTime(Date),
-					"loglen" : len(CommitMsg),
-					"log" : CommitMsg,
-				}
-		  )
-	#end WriteTag
+    def WriteTag(self, Date, RevisionProps, Name, CommitID) :
+        """writes a tag which is assumed to refer to the previous commit."""
+        CommitMsg = RevisionProps.get("log", "")
+        Author = RevisionProps["author"]
+        if re.search(r"^[^\<].*\@.*[^\>]$", Author) != None :
+            Author = "<" + Author + ">"
+              # keep git happy
+        #end if
+        self.Dump.write \
+          (
+                "tag %(name)s\n"
+                "from :%(commitid)d\n"
+                "tagger %(author)s %(when)s\n"
+                "data %(loglen)d\n"
+                "%(log)s\n"
+            %
+                {
+                    "name" : Name,
+                    "commitid" : CommitID,
+                    "author" : Author,
+                    "when" : self.FormatTime(Date),
+                    "loglen" : len(CommitMsg),
+                    "log" : CommitMsg,
+                }
+          )
+    #end WriteTag
 
-	def __init__(self, Dump) :
-		"""Dump is the stream to which to write the contents of the
-		repository dump."""
-		self.Dump = Dump
-		self.LastMark = 0
-		self.LastCommit = None
-		self.Dump.write \
-		  (
-			"# Git repository dump created by darcs2git.\n"
-		  )
-	#end __init__
+    def __init__(self, Dump) :
+        """Dump is the stream to which to write the contents of the
+        repository dump."""
+        self.Dump = Dump
+        self.LastMark = 0
+        self.LastCommit = None
+        self.Dump.write \
+          (
+            "# Git repository dump created by darcs2git.\n"
+          )
+    #end __init__
 
 #end GitDumpWriter
 
@@ -194,18 +194,18 @@ class GitDumpWriter :
 temp_dir = None
 
 def create_temp_dir() :
-	global temp_dir
-	if temp_dir == None :
-		temp_dir = tempfile.mkdtemp(prefix = "darcs2git-")
-	#end if
+    global temp_dir
+    if temp_dir == None :
+        temp_dir = tempfile.mkdtemp(prefix = "darcs2git-")
+    #end if
 #end create_temp_dir
 
 def cleanup_temp_dir() :
-	global temp_dir
-	if temp_dir != None :
-		delete_dir(temp_dir)
-		temp_dir = None
-	#end if
+    global temp_dir
+    if temp_dir != None :
+        delete_dir(temp_dir)
+        temp_dir = None
+    #end if
 #end cleanup_temp_dir
 
 #+
@@ -213,182 +213,182 @@ def cleanup_temp_dir() :
 #-
 
 class repo :
-	"""interpreting patches from a Darcs repository."""
+    """interpreting patches from a Darcs repository."""
 
-	files = {}
-	  # for keeping track of current state of repository files.
-	  # Keys are items in directory, values are dictionaries with
-	  # either a "children" key for a subdirectory, or "id" and
-	  # for a file, to be used for naming the temporary copy of
-	  # that file.
-	file_seq = 0
-	  # for assigning unique names to temporary files.
-	commits = {}
-	  # for saving different versions of files, indexed
-	  # by caller-supplied commit ids.
+    files = {}
+      # for keeping track of current state of repository files.
+      # Keys are items in directory, values are dictionaries with
+      # either a "children" key for a subdirectory, or "id" and
+      # for a file, to be used for naming the temporary copy of
+      # that file.
+    file_seq = 0
+      # for assigning unique names to temporary files.
+    commits = {}
+      # for saving different versions of files, indexed
+      # by caller-supplied commit ids.
 
-	@classmethod
-	def find_container(self, path_name) :
-		"""traverses the repository tree for path_name, returning the
-		dictionary for the parent directory and the leaf name. Will
-		die if not all parts of the containing directory tree already
-		exist."""
-		path = path_name.split("/")
-		assert path[0] == "."
-		parent = self.files
-		for item in path[1:-1] :
-			parent = parent[item]["children"]
-		#end for
-		return (parent, path[-1])
-	#end find_container
+    @classmethod
+    def find_container(self, path_name) :
+        """traverses the repository tree for path_name, returning the
+        dictionary for the parent directory and the leaf name. Will
+        die if not all parts of the containing directory tree already
+        exist."""
+        path = path_name.split("/")
+        assert path[0] == "."
+        parent = self.files
+        for item in path[1:-1] :
+            parent = parent[item]["children"]
+        #end for
+        return (parent, path[-1])
+    #end find_container
 
-	@classmethod
-	def add_dir(self, dir_name) :
-		"""marks the creation of a new directory within the repository tree."""
-		(parent, dir_name) = self.find_container(dir_name)
-		assert not parent.has_key(dir_name)
-		parent[dir_name] = {"children" : {}}
-	#end add_dir
+    @classmethod
+    def add_dir(self, dir_name) :
+        """marks the creation of a new directory within the repository tree."""
+        (parent, dir_name) = self.find_container(dir_name)
+        assert not parent.has_key(dir_name)
+        parent[dir_name] = {"children" : {}}
+    #end add_dir
 
-	@classmethod
-	def add_file(self, file_name) :
-		"""marks the creation of a new file within the repository tree."""
-		(parent, name) = self.find_container(file_name)
-		assert not parent.has_key(name)
-		parent[name] = {} # no initial id assigned => empty file
-	#end add_file
+    @classmethod
+    def add_file(self, file_name) :
+        """marks the creation of a new file within the repository tree."""
+        (parent, name) = self.find_container(file_name)
+        assert not parent.has_key(name)
+        parent[name] = {} # no initial id assigned => empty file
+    #end add_file
 
-	@classmethod
-	def open_file(self, file_name, line_nr) :
-		"""opens the specified file and returns a repo object instance
-		ready for updating the existing version of the file to a new version."""
-		(parent, file_name) = self.find_container(file_name)
-		result = self()
-		result.parent = parent
-		result.name = file_name
-		item = parent[file_name]
-		create_temp_dir() # if not already done
-		self.file_seq += 1
-		result.newid = str(self.file_seq)
-		if item.has_key("id") :
-			result.old = open(os.path.join(temp_dir, item["id"]), "r").readlines()
-			  # load entire file into memory so I can match lines with some leeway
-		else :
-			result.old = [] # empty new file
-		#end if
-		result.new = open(os.path.join(temp_dir, result.newid), "w")
-		# sys.stderr.write("repo.open_file: newid %s for %s\n" % (result.newid, file_name)) # debug
-		result.last_line_written = 0
-		  # could get rid of this, I don't actually use the ability to partially
-		  # write out new file
-		result.line_nr = 1
-		result.delete_run_started = False
-		result.extra_line_at_end = False
-		result.seek_to_line(line_nr)
-		return result
-	#end open_file
+    @classmethod
+    def open_file(self, file_name, line_nr) :
+        """opens the specified file and returns a repo object instance
+        ready for updating the existing version of the file to a new version."""
+        (parent, file_name) = self.find_container(file_name)
+        result = self()
+        result.parent = parent
+        result.name = file_name
+        item = parent[file_name]
+        create_temp_dir() # if not already done
+        self.file_seq += 1
+        result.newid = str(self.file_seq)
+        if item.has_key("id") :
+            result.old = open(os.path.join(temp_dir, item["id"]), "r").readlines()
+              # load entire file into memory so I can match lines with some leeway
+        else :
+            result.old = [] # empty new file
+        #end if
+        result.new = open(os.path.join(temp_dir, result.newid), "w")
+        # sys.stderr.write("repo.open_file: newid %s for %s\n" % (result.newid, file_name)) # debug
+        result.last_line_written = 0
+          # could get rid of this, I don't actually use the ability to partially
+          # write out new file
+        result.line_nr = 1
+        result.delete_run_started = False
+        result.extra_line_at_end = False
+        result.seek_to_line(line_nr)
+        return result
+    #end open_file
 
-	def flush_previous_lines(self) :
-		"""ensure lines prior to self.line_nr have been saved to new version
-		of file."""
-		for i in range(0, self.line_nr - self.last_line_written - 1) :
-			self.new.write(self.old[i])
-		#end if
-		self.old = self.old[self.line_nr - self.last_line_written - 1:]
-		self.last_line_written = self.line_nr - 1
-	#end flush_previous_lines
+    def flush_previous_lines(self) :
+        """ensure lines prior to self.line_nr have been saved to new version
+        of file."""
+        for i in range(0, self.line_nr - self.last_line_written - 1) :
+            self.new.write(self.old[i])
+        #end if
+        self.old = self.old[self.line_nr - self.last_line_written - 1:]
+        self.last_line_written = self.line_nr - 1
+    #end flush_previous_lines
 
-	def seek_to_line(self, line_nr) :
-		"""repositions the file to the specified line number, automatically
-		copying prior skipped lines to the new version of the file."""
-		assert line_nr > self.last_line_written
-		if not self.delete_run_started and line_nr > len(self.old) + self.last_line_written + 1 :
-			self.old.append("\n")
-			self.extra_line_at_end = True
-			  # see if this fixes some cases of blank lines ending up in the wrong place
-		#end if
-		self.line_nr = min(line_nr, len(self.old) + self.last_line_written + 1)
-		self.delete_run_started = False
-	#end seek_to_line
+    def seek_to_line(self, line_nr) :
+        """repositions the file to the specified line number, automatically
+        copying prior skipped lines to the new version of the file."""
+        assert line_nr > self.last_line_written
+        if not self.delete_run_started and line_nr > len(self.old) + self.last_line_written + 1 :
+            self.old.append("\n")
+            self.extra_line_at_end = True
+              # see if this fixes some cases of blank lines ending up in the wrong place
+        #end if
+        self.line_nr = min(line_nr, len(self.old) + self.last_line_written + 1)
+        self.delete_run_started = False
+    #end seek_to_line
 
-	def delete_line(self, line) :
-		"""discards the current line from the existing file, which must be equal
-		to line. line must end with newline."""
-		if line == "\n" and self.line_nr - self.last_line_written - 1 == len(self.old) :
-			pass # trying to delete an empty line at EOF -- ignore
-		elif line == self.old[self.line_nr - self.last_line_written - 1] :
-			pass # fine
-		elif not self.delete_run_started :
-			# try a sloppy match
-			if (
-					self.line_nr > self.last_line_written + 1
-				and
-					line == self.old[self.line_nr - self.last_line_written - 2]
-			) :
-				# sys.stderr.write("delete_line: backing up 1\n") # debug
-				self.line_nr -= 1
-			elif (
-					self.line_nr - self.last_line_written < len(self.old)
-				and
-					line == self.old[self.line_nr - self.last_line_written]
-			) :
-				# sys.stderr.write("delete_line: advancing 1\n") # debug
-				self.line_nr += 1
-			else :
-				raise RuntimeError("can't match line nr %d for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
-			#end if
-		else :
-			raise RuntimeError("line nr %d doesn't match for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
-		#end if
-		if self.line_nr - self.last_line_written - 1 < len(self.old) :
-			self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written] = []
-		#end if
-		self.delete_run_started = True # no more sloppy matches
-	#end delete_line
+    def delete_line(self, line) :
+        """discards the current line from the existing file, which must be equal
+        to line. line must end with newline."""
+        if line == "\n" and self.line_nr - self.last_line_written - 1 == len(self.old) :
+            pass # trying to delete an empty line at EOF -- ignore
+        elif line == self.old[self.line_nr - self.last_line_written - 1] :
+            pass # fine
+        elif not self.delete_run_started :
+            # try a sloppy match
+            if (
+                    self.line_nr > self.last_line_written + 1
+                and
+                    line == self.old[self.line_nr - self.last_line_written - 2]
+            ) :
+                # sys.stderr.write("delete_line: backing up 1\n") # debug
+                self.line_nr -= 1
+            elif (
+                    self.line_nr - self.last_line_written < len(self.old)
+                and
+                    line == self.old[self.line_nr - self.last_line_written]
+            ) :
+                # sys.stderr.write("delete_line: advancing 1\n") # debug
+                self.line_nr += 1
+            else :
+                raise RuntimeError("can't match line nr %d for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
+            #end if
+        else :
+            raise RuntimeError("line nr %d doesn't match for delete: %s vs %s" % (self.line_nr, repr(line), repr(self.old[self.line_nr - self.last_line_written - 1])))
+        #end if
+        if self.line_nr - self.last_line_written - 1 < len(self.old) :
+            self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written] = []
+        #end if
+        self.delete_run_started = True # no more sloppy matches
+    #end delete_line
 
-	def add_line(self, line) :
-		"""adds a new line to the new file. line must end with newline."""
-		self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written - 1] = [line]
-		self.line_nr += 1 # ensure lines don't end up in reverse order
-		self.delete_run_started = False
-	#end add_line
+    def add_line(self, line) :
+        """adds a new line to the new file. line must end with newline."""
+        self.old[self.line_nr - self.last_line_written - 1 : self.line_nr - self.last_line_written - 1] = [line]
+        self.line_nr += 1 # ensure lines don't end up in reverse order
+        self.delete_run_started = False
+    #end add_line
 
-	def close(self) :
-		"""Call this after finishing making all changes, to save the new version
-		of the file in place of the existing version. Returns the entire
-		contents of the new version."""
-		if self.extra_line_at_end and not self.delete_run_started and len(self.old) > 0 and self.old[-1] == "\n" :
-			del self.old[-1]
-		#end if
-		self.line_nr = self.last_line_written + len(self.old) + 1 # flush out all remaining lines
-		self.flush_previous_lines()
-		self.new.flush()
-		self.new.close()
-		item = self.parent[self.name]
-		if False : # item.has_key("id") : # don't delete old version, might belong to a previous commit
-			os.unlink(os.path.join(temp_dir, item["id"]))
-		#end if
-		item["id"] = self.newid
-		return open(os.path.join(temp_dir, item["id"]), "r").read()
-	#end close
+    def close(self) :
+        """Call this after finishing making all changes, to save the new version
+        of the file in place of the existing version. Returns the entire
+        contents of the new version."""
+        if self.extra_line_at_end and not self.delete_run_started and len(self.old) > 0 and self.old[-1] == "\n" :
+            del self.old[-1]
+        #end if
+        self.line_nr = self.last_line_written + len(self.old) + 1 # flush out all remaining lines
+        self.flush_previous_lines()
+        self.new.flush()
+        self.new.close()
+        item = self.parent[self.name]
+        if False : # item.has_key("id") : # don't delete old version, might belong to a previous commit
+            os.unlink(os.path.join(temp_dir, item["id"]))
+        #end if
+        item["id"] = self.newid
+        return open(os.path.join(temp_dir, item["id"]), "r").read()
+    #end close
 
-	@classmethod
-	def save_commit(self, commitid) :
-		"""saves the last-written state of all files as a commit with the
-		specified id."""
-		# sys.stderr.write("repo.save_commit %s = %s\n:" % (commitid, repr(self.files))) # debug
-		if not self.commits.has_key(commitid) : # only do if not already done
-			self.commits[commitid] = copy.deepcopy(self.files)
-		#end if
-	#end save_commit
+    @classmethod
+    def save_commit(self, commitid) :
+        """saves the last-written state of all files as a commit with the
+        specified id."""
+        # sys.stderr.write("repo.save_commit %s = %s\n:" % (commitid, repr(self.files))) # debug
+        if not self.commits.has_key(commitid) : # only do if not already done
+            self.commits[commitid] = copy.deepcopy(self.files)
+        #end if
+    #end save_commit
 
-	@classmethod
-	def restore_commit(self, commitid) :
-		"""restores the state of all files to that previously saved
-		under the specified commit id."""
-		# sys.stderr.write("repo.restore_commit %s\n:" % commitid) # debug
-		self.files = copy.deepcopy(self.commits[commitid])
-	#end restore_commit
+    @classmethod
+    def restore_commit(self, commitid) :
+        """restores the state of all files to that previously saved
+        under the specified commit id."""
+        # sys.stderr.write("repo.restore_commit %s\n:" % commitid) # debug
+        self.files = copy.deepcopy(self.commits[commitid])
+    #end restore_commit
 
 #end repo
 
@@ -397,137 +397,137 @@ class repo :
 #-
 
 def ReadPatchHeader(Patch, FirstLine = None) :
-	"""reads the header part of a Darcs patch file."""
-	if FirstLine != None :
-		Comment = FirstLine
-	else :
-		Comment = Patch.readline()
-	#end if
-	assert Comment[0] == "["
-	while True :
-		AuthorSeq = Patch.readline()
-		assert len(AuthorSeq) != 0
-		ExpectHunks = AuthorSeq.endswith("] {\n")
-		if ExpectHunks or AuthorSeq.endswith("] \n") :
-			break
-		Comment += AuthorSeq
-	#end while
-	Comment = Comment[1:] # drop leading "["
-	(Author, Seq) = AuthorDatePat.search(AuthorSeq.rstrip("\n")).groups()
-	return (Comment, Author, Seq, ExpectHunks)
+    """reads the header part of a Darcs patch file."""
+    if FirstLine != None :
+        Comment = FirstLine
+    else :
+        Comment = Patch.readline()
+    #end if
+    assert Comment[0] == "["
+    while True :
+        AuthorSeq = Patch.readline()
+        assert len(AuthorSeq) != 0
+        ExpectHunks = AuthorSeq.endswith("] {\n")
+        if ExpectHunks or AuthorSeq.endswith("] \n") :
+            break
+        Comment += AuthorSeq
+    #end while
+    Comment = Comment[1:] # drop leading "["
+    (Author, Seq) = AuthorDatePat.search(AuthorSeq.rstrip("\n")).groups()
+    return (Comment, Author, Seq, ExpectHunks)
 #end ReadPatchHeader
 
 def SeqToDate(Seq) :
-	"""decodes a 14-digit Darcs patch date/time digit string."""
-	return calendar.timegm \
-	  ( # assuming it's UTC!
-		(
-			int(Seq[0:4]), # year
-			int(Seq[4:6]), # month
-			int(Seq[6:8]), # day
-			int(Seq[8:10]), # hour
-			int(Seq[10:12]), # minute
-			int(Seq[12:14]), # second
-			0, # day of week
-			0, # day of year
-			-1, # isdst
-		)
-	  )
+    """decodes a 14-digit Darcs patch date/time digit string."""
+    return calendar.timegm \
+      ( # assuming it's UTC!
+        (
+            int(Seq[0:4]), # year
+            int(Seq[4:6]), # month
+            int(Seq[6:8]), # day
+            int(Seq[8:10]), # hour
+            int(Seq[10:12]), # minute
+            int(Seq[12:14]), # second
+            0, # day of week
+            0, # day of year
+            -1, # isdst
+        )
+      )
 #end SeqToDate
 
 def OpenPatchFile(FileName) :
-	"""opens a patch file and returns the preparsed header part, along
-	with a file object for reading the rest of the contents."""
-	Patch = (open, gzip.GzipFile)[FileName.endswith(".gz")](FileName, "r")
-	(Comment, Author, Seq, ExpectHunks) = ReadPatchHeader(Patch)
-	return (Patch, Comment, Author, Seq, ExpectHunks)
+    """opens a patch file and returns the preparsed header part, along
+    with a file object for reading the rest of the contents."""
+    Patch = (open, gzip.GzipFile)[FileName.endswith(".gz")](FileName, "r")
+    (Comment, Author, Seq, ExpectHunks) = ReadPatchHeader(Patch)
+    return (Patch, Comment, Author, Seq, ExpectHunks)
 #end OpenPatchFile
 
 def ProcessPatchHunks(Patch, Dump, ParentCommit = None, BranchName = None) :
-	"""assumes that the contents of Patch will consist of "adddir", "addfile"
-	and "hunk" directives. Reads and processes these, applying the changes
-	to the state of repo, writing the result as a new revision via Dump
-	and saving it as a commit in repo."""
-	if ParentCommit != None :
-		repo.restore_commit(ParentCommit)
-	#end if
-	Step = {}
-	opline = None
-	while True :
-		if opline == None :
-			opline = Patch.readline()
-		#end if
-		if opline == "}\n" :
-			break
-		# sys.stderr.write("opline: %s" % opline) # debug
-		(op, opline) = opline.split(" ", 1)
-		if op == "adddir" :
-			repo.add_dir(opline[:-1])
-			opline = None
-		elif op == "addfile" :
-			filename = opline[:-1]
-			repo.add_file(filename)
-			filename = filename.lstrip("./") # only confuses git
-			opline = None
-			Step[filename] = \
-				{
-					"kind" : "file",
-					"action" : "add", # actually "add" and "change" are the same to GitDumpWriter
-					"path" : filename,
-					"content" : "", # ensure initial empty file exists, at least
-				}
-		elif op == "hunk" :
-			(filename, linenr) = opline[:-1].split(" ")
-			# Note there can be multiple consecutive hunks for the same
-			# filename. I don't bother to optimize for this for now
-			rev = repo.open_file(filename, int(linenr))
-			filename = filename.lstrip("./") # only confuses git
-			lines_added = 0
-			lines_deleted = 0
-			while True :
-				line = Patch.readline()
-				if line.startswith("-") :
-					rev.delete_line(line[1:])
-					lines_deleted += 1
-				elif line.startswith("+")  :
-					rev.add_line(line[1:])
-					lines_added += 1
-				else :
-					opline = line
-					break
-				#end if
-			#end while
-			contents = rev.close()
-			# sys.stderr.write("hunk lines added/deleted: %d/%d\n" % (lines_added, lines_deleted)) # debug
-			if Step.has_key(filename) :
-				Step[filename]["content"] = contents
-			else :
-				Step[filename] = \
-					{
-						"kind" : "file",
-						"action" : "change",
-						"path" : filename,
-						"content" : contents,
-					}
-			#end if
-		else :
-			raise RuntimeError("unrecognized op %s" % op)
-		#end if
-	#end while
-	RevisionProps = \
-		{
-			"log" : Comment,
-			"author" : Author,
-		}
-	if ParentCommit != None :
-		RevisionProps["from_commit"] = ParentCommit
-	#end if
-	if BranchName != None :
-		RevisionProps["branch"] = BranchName
-	#end if
-	Dump.WriteRevision(SeqToDate(Seq), RevisionProps, Step.values())
-	repo.save_commit(Dump.LastCommit)
-	return Dump.LastCommit
+    """assumes that the contents of Patch will consist of "adddir", "addfile"
+    and "hunk" directives. Reads and processes these, applying the changes
+    to the state of repo, writing the result as a new revision via Dump
+    and saving it as a commit in repo."""
+    if ParentCommit != None :
+        repo.restore_commit(ParentCommit)
+    #end if
+    Step = {}
+    opline = None
+    while True :
+        if opline == None :
+            opline = Patch.readline()
+        #end if
+        if opline == "}\n" :
+            break
+        # sys.stderr.write("opline: %s" % opline) # debug
+        (op, opline) = opline.split(" ", 1)
+        if op == "adddir" :
+            repo.add_dir(opline[:-1])
+            opline = None
+        elif op == "addfile" :
+            filename = opline[:-1]
+            repo.add_file(filename)
+            filename = filename.lstrip("./") # only confuses git
+            opline = None
+            Step[filename] = \
+                {
+                    "kind" : "file",
+                    "action" : "add", # actually "add" and "change" are the same to GitDumpWriter
+                    "path" : filename,
+                    "content" : "", # ensure initial empty file exists, at least
+                }
+        elif op == "hunk" :
+            (filename, linenr) = opline[:-1].split(" ")
+            # Note there can be multiple consecutive hunks for the same
+            # filename. I don't bother to optimize for this for now
+            rev = repo.open_file(filename, int(linenr))
+            filename = filename.lstrip("./") # only confuses git
+            lines_added = 0
+            lines_deleted = 0
+            while True :
+                line = Patch.readline()
+                if line.startswith("-") :
+                    rev.delete_line(line[1:])
+                    lines_deleted += 1
+                elif line.startswith("+")  :
+                    rev.add_line(line[1:])
+                    lines_added += 1
+                else :
+                    opline = line
+                    break
+                #end if
+            #end while
+            contents = rev.close()
+            # sys.stderr.write("hunk lines added/deleted: %d/%d\n" % (lines_added, lines_deleted)) # debug
+            if Step.has_key(filename) :
+                Step[filename]["content"] = contents
+            else :
+                Step[filename] = \
+                    {
+                        "kind" : "file",
+                        "action" : "change",
+                        "path" : filename,
+                        "content" : contents,
+                    }
+            #end if
+        else :
+            raise RuntimeError("unrecognized op %s" % op)
+        #end if
+    #end while
+    RevisionProps = \
+        {
+            "log" : Comment,
+            "author" : Author,
+        }
+    if ParentCommit != None :
+        RevisionProps["from_commit"] = ParentCommit
+    #end if
+    if BranchName != None :
+        RevisionProps["branch"] = BranchName
+    #end if
+    Dump.WriteRevision(SeqToDate(Seq), RevisionProps, Step.values())
+    repo.save_commit(Dump.LastCommit)
+    return Dump.LastCommit
 #end ProcessPatchHunks
 
 #+
@@ -544,83 +544,83 @@ PatchesApplied = []
 PatchCommits = {() : None} # mapping from sequences of patches applied to corresponding commit IDs
 Tags = {} # patches that a tag refers to, for expanding references to tag
 for \
-		Entry \
-	in \
-		sorted \
-		  (
-			f for f in os.listdir(PatchesDir) if PatchDatePat.search(f) != None
-		  ) \
+        Entry \
+    in \
+        sorted \
+          (
+            f for f in os.listdir(PatchesDir) if PatchDatePat.search(f) != None
+          ) \
 :
-	(Patch, Comment, Author, Seq, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, Entry))
-	# sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
-	if ExpectHunks :
-		sys.stdout.write("# Patch: %s\n" % Entry)
-		CommitID = ProcessPatchHunks(Patch, Dump, PatchCommits[tuple(PatchesApplied)])
-		PatchFileNames[Seq] = Entry # in case I need to re-apply it on a different branch
-		PatchesApplied.append(Seq)
-		PatchCommits[tuple(PatchesApplied)] = CommitID
-	else :
-		# this "patch" is a tag definition.
-		line = Patch.readline()
-		assert line == "<\n"
-		IncludingPatches = set()
-		while True :
-			line = Patch.readline()
-			if line == "> {\n" :
-				break
-			(IncludeComment, _, IncludeSeq, ExpectHunks) = ReadPatchHeader(Patch, line)
-			assert not ExpectHunks
-			# sys.stderr.write("tag %s from %s\n" % (IncludeComment, IncludeSeq)) # debug
-			IncludingPatches.add(IncludeSeq)
-			TagPatches = Tags.get(IncludeSeq)
-			if TagPatches != None :
-				IncludingPatches.update(TagPatches) # include patches that tag refers to
-				IncludingPatches.remove(IncludeSeq)
-			#end if
-		#end while
-		IncludingPatches = sorted(tuple(IncludingPatches))
-		assert line == "> {\n"
-		line = Patch.readline()
-		assert line == "}\n"
-		assert Comment.startswith("TAG ")
-		TagName = Comment[4:].rstrip("\n")
-		BranchName = "b-" + TagName # avoid name-ambiguity warnings from git
-		RevisionProps = \
-			{
-				"author" : Author,
-			}
-		assert len(set(IncludingPatches) - set(PatchesApplied)) == 0, "tag references patches not yet seen: %s - %s = %s" % (set(IncludingPatches), repr(set(PatchesApplied)), repr(set(IncludingPatches) - set(PatchesApplied)))
-		TagPatches = matching_prefix(tuple(IncludingPatches), tuple(PatchesApplied))
-		CommitID = PatchCommits[TagPatches]
-		if len(TagPatches) < len(IncludingPatches)  :
-			# need to create a branch
-			# sys.stderr.write("branch %s from %s omitting %s\n" % (repr(IncludingPatches), repr(TagPatches), repr(PatchesApplied[len(TagPatches):]))) # debug
-			SaveMasterCommit = Dump.LastCommit
-			repo.save_commit(SaveMasterCommit)
-			# sys.stderr.write("branch %s from commit :%s\n" % (BranchName, str(CommitID))) # debug
-			SavePatchesApplied = PatchesApplied
-			PatchesApplied = list(TagPatches)
-			for BranchPatchSeq in IncludingPatches[len(TagPatches):] :
-				(BranchPatch, _, _, _, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, PatchFileNames[BranchPatchSeq]))
-				assert ExpectHunks
-				sys.stdout.write("# Branch Patch: %s\n" % BranchPatchSeq)
-				CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], BranchName)
-				BranchPatch.close()
-				PatchesApplied.append(Seq)
-				PatchCommits[tuple(PatchesApplied)] = CommitID
-			#end for
-			PatchesApplied = SavePatchesApplied
-			repo.restore_commit(SaveMasterCommit)
-		#end if
-		Tags[Seq] = set(IncludingPatches)
-		Dump.WriteTag(SeqToDate(Seq), RevisionProps, TagName, CommitID)
-		PatchFileNames[Seq] = Entry
-		# PatchesApplied.append(Seq)
-		# PatchCommits[tuple(PatchesApplied)] = CommitID
-	#end if
-	Patch.close()
+    (Patch, Comment, Author, Seq, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, Entry))
+    # sys.stderr.write("Author: %s Seq %s Comment %s Hunks %s\n" % (Author, Seq, Comment, ("N", "Y")[ExpectHunks])) # debug
+    if ExpectHunks :
+        sys.stdout.write("# Patch: %s\n" % Entry)
+        CommitID = ProcessPatchHunks(Patch, Dump, PatchCommits[tuple(PatchesApplied)])
+        PatchFileNames[Seq] = Entry # in case I need to re-apply it on a different branch
+        PatchesApplied.append(Seq)
+        PatchCommits[tuple(PatchesApplied)] = CommitID
+    else :
+        # this "patch" is a tag definition.
+        line = Patch.readline()
+        assert line == "<\n"
+        IncludingPatches = set()
+        while True :
+            line = Patch.readline()
+            if line == "> {\n" :
+                break
+            (IncludeComment, _, IncludeSeq, ExpectHunks) = ReadPatchHeader(Patch, line)
+            assert not ExpectHunks
+            # sys.stderr.write("tag %s from %s\n" % (IncludeComment, IncludeSeq)) # debug
+            IncludingPatches.add(IncludeSeq)
+            TagPatches = Tags.get(IncludeSeq)
+            if TagPatches != None :
+                IncludingPatches.update(TagPatches) # include patches that tag refers to
+                IncludingPatches.remove(IncludeSeq)
+            #end if
+        #end while
+        IncludingPatches = sorted(tuple(IncludingPatches))
+        assert line == "> {\n"
+        line = Patch.readline()
+        assert line == "}\n"
+        assert Comment.startswith("TAG ")
+        TagName = Comment[4:].rstrip("\n")
+        BranchName = "b-" + TagName # avoid name-ambiguity warnings from git
+        RevisionProps = \
+            {
+                "author" : Author,
+            }
+        assert len(set(IncludingPatches) - set(PatchesApplied)) == 0, "tag references patches not yet seen: %s - %s = %s" % (set(IncludingPatches), repr(set(PatchesApplied)), repr(set(IncludingPatches) - set(PatchesApplied)))
+        TagPatches = matching_prefix(tuple(IncludingPatches), tuple(PatchesApplied))
+        CommitID = PatchCommits[TagPatches]
+        if len(TagPatches) < len(IncludingPatches)  :
+            # need to create a branch
+            # sys.stderr.write("branch %s from %s omitting %s\n" % (repr(IncludingPatches), repr(TagPatches), repr(PatchesApplied[len(TagPatches):]))) # debug
+            SaveMasterCommit = Dump.LastCommit
+            repo.save_commit(SaveMasterCommit)
+            # sys.stderr.write("branch %s from commit :%s\n" % (BranchName, str(CommitID))) # debug
+            SavePatchesApplied = PatchesApplied
+            PatchesApplied = list(TagPatches)
+            for BranchPatchSeq in IncludingPatches[len(TagPatches):] :
+                (BranchPatch, _, _, _, ExpectHunks) = OpenPatchFile(os.path.join(PatchesDir, PatchFileNames[BranchPatchSeq]))
+                assert ExpectHunks
+                sys.stdout.write("# Branch Patch: %s\n" % BranchPatchSeq)
+                CommitID = ProcessPatchHunks(BranchPatch, Dump, PatchCommits[tuple(PatchesApplied)], BranchName)
+                BranchPatch.close()
+                PatchesApplied.append(Seq)
+                PatchCommits[tuple(PatchesApplied)] = CommitID
+            #end for
+            PatchesApplied = SavePatchesApplied
+            repo.restore_commit(SaveMasterCommit)
+        #end if
+        Tags[Seq] = set(IncludingPatches)
+        Dump.WriteTag(SeqToDate(Seq), RevisionProps, TagName, CommitID)
+        PatchFileNames[Seq] = Entry
+        # PatchesApplied.append(Seq)
+        # PatchCommits[tuple(PatchesApplied)] = CommitID
+    #end if
+    Patch.close()
 #end for
 
 if not KeepTemps :
-	cleanup_temp_dir()
+    cleanup_temp_dir()
 #end if
